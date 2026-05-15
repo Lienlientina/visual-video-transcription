@@ -1,53 +1,38 @@
 """
-畫面理解模塊 - 使用 Ollama LLaVA 進行多模態分析
+畫面理解模塊 - 使用 Gemini API 進行多模態分析
 """
 import base64
-import requests
 from pathlib import Path
 from typing import Dict
+import google.generativeai as genai
 
-from config import OLLAMA_BASE_URL, LLAVA_MODEL
+from config import GEMINI_API_KEY, GEMINI_MODEL
 from utils import build_prompt_for_vision
 
 
 class VisionAnalyzer:
-    """畫面理解類"""
+    """畫面理解類 - 使用 Gemini API"""
     
-    def __init__(self, model_name: str = LLAVA_MODEL):
+    def __init__(self, model_name: str = GEMINI_MODEL):
         """
         初始化視覺分析器
         
         Args:
-            model_name (str): Ollama 模型名稱，預設為 LLAVA_MODEL
+            model_name (str): Gemini 模型名稱，預設為 GEMINI_MODEL
         """
+        if not GEMINI_API_KEY:
+            raise RuntimeError(
+                "❌ 缺少 GEMINI_API_KEY\n"
+                "請設置環境變數: set GEMINI_API_KEY=your-api-key\n"
+                "或在 config.py 中直接填入 API Key"
+            )
+        
         self.model_name = model_name
-        self.base_url = OLLAMA_BASE_URL
+        genai.configure(api_key=GEMINI_API_KEY)
         
         print(f"[VisionAnalyzer] 初始化 {model_name} 模型")
-        print(f"[VisionAnalyzer] Ollama API: {self.base_url}")
-        
-        # 驗證連接
-        try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            if response.status_code == 200:
-                models = response.json().get("models", [])
-                model_names = [m.get("name") for m in models]
-                
-                if self.model_name not in model_names:
-                    raise RuntimeError(
-                        f"模型 '{self.model_name}' 未找到。\n"
-                        f"可用模型: {model_names}\n"
-                        f"請執行: ollama pull {self.model_name}"
-                    )
-                
-                print(f"✓ 模型 '{self.model_name}' 可用")
-            else:
-                raise RuntimeError(f"無法連接 Ollama API: {response.status_code}")
-        except requests.exceptions.ConnectionError:
-            raise RuntimeError(
-                f"無法連接 Ollama (地址: {self.base_url})\n"
-                "請確保 Ollama 已啟動: ollama serve"
-            )
+        print(f"[VisionAnalyzer] 使用 Gemini API")
+        print(f"✓ Gemini 已就緒")
     
     def analyze_image(self, image_path: str, context: str = "", deictic_word: str = "") -> Dict:
         """
@@ -63,7 +48,7 @@ class VisionAnalyzer:
                 {
                     "image_path": "outputs/frames/0_00_05.jpg",
                     "description": "白板上有一個微分公式...",
-                    "model": "llava",
+                    "model": "gemini-3.1-flash-lite",
                     "success": True
                 }
         """
@@ -82,34 +67,37 @@ class VisionAnalyzer:
             with open(image_path, 'rb') as f:
                 image_data = base64.standard_b64encode(f.read()).decode('utf-8')
             
-            # 構建提示詞（包含指示詞）
+            # 構建提示詞
             prompt = build_prompt_for_vision(str(image_path), context, deictic_word)
             
             print(f"[VisionAnalyzer] 分析圖片: {image_path.name}")
             
-            # 調用 Ollama API
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": prompt,
-                    "images": [image_data],
-                    "stream": False,
-                    "temperature": 0.7
-                },
-                timeout=120  # LLaVA 推理可能比較慢
-            )
+            # 調用 Gemini API
+            model = genai.GenerativeModel(self.model_name)
             
-            if response.status_code != 200:
-                return {
-                    "image_path": str(image_path),
-                    "description": "",
-                    "error": f"API 返回錯誤: {response.status_code}",
-                    "success": False
+            # 從文件副檔名判斷 MIME 類型
+            suffix = image_path.suffix.lower()
+            mime_types = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".gif": "image/gif",
+                ".webp": "image/webp"
+            }
+            mime_type = mime_types.get(suffix, "image/jpeg")
+            
+            # 構建請求內容
+            contents = [
+                prompt,
+                {
+                    "mime_type": mime_type,
+                    "data": image_data
                 }
+            ]
             
-            result_json = response.json()
-            description = result_json.get("response", "").strip()
+            # 調用 Gemini
+            response = model.generate_content(contents)
+            description = response.text.strip()
             
             print(f"✓ 分析完成")
             
@@ -120,18 +108,12 @@ class VisionAnalyzer:
                 "success": True
             }
         
-        except requests.exceptions.Timeout:
-            return {
-                "image_path": str(image_path),
-                "description": "",
-                "error": "API 請求超時（模型推理過慢）",
-                "success": False
-            }
         except Exception as e:
+            error_msg = str(e)
             return {
                 "image_path": str(image_path),
                 "description": "",
-                "error": str(e),
+                "error": error_msg,
                 "success": False
             }
     
@@ -168,12 +150,16 @@ class VisionAnalyzer:
         
         for idx, frame_info in enumerate(frames, 1):
             image_path = frame_info.get("path")
+            timestamp = frame_info.get("timestamp")
+            precise_seconds = frame_info.get("precise_seconds")  # ← 新增：精確秒數
             context = frame_info.get("text", "")
-            deictic_word = frame_info.get("word", "")  # 提取指示詞
+            deictic_word = frame_info.get("word", "")
             
             print(f"  [{idx}/{len(frames)}] 分析: {Path(image_path).name}")
             
             result = self.analyze_image(image_path, context, deictic_word)
+            result["timestamp"] = timestamp
+            result["precise_seconds"] = precise_seconds  # ← 新增：保存精確秒數
             analyses.append(result)
             
             if result.get("success"):

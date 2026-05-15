@@ -45,7 +45,8 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print("⏳ 正在轉錄...")
         try:
             transcriber = Transcriber()
-            transcript_json = transcriber.transcribe(str(video_path), language="zh")
+            # ← 改進：不硬編碼語言，讓 Whisper 自動偵測
+            transcript_json = transcriber.transcribe(str(video_path))
         except Exception as e:
             print(f"✗ 轉錄失敗: {e}")
             return
@@ -172,9 +173,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print(f"\n    融合: {segment['text'][:100]}...")
         
         if segment["replacements"]:
-            print(f"\n    替換詳情:")
+            print(f"\n    補充詳情:")
             for repl in segment["replacements"][:2]:
-                print(f"      • 「{repl['word']}」→ 「{repl['description'][:50]}...」")
+                print(f"      • 「{repl['word']}」← 「{repl['supplement'][:50]}...」")
         
         print()
     

@@ -1,8 +1,8 @@
-# 🎬 Visual Video Transcription
+# 🎬 Multi-Language Video Transcription with Visual Insights
 
-自動將影片內容轉換為文字檔，包括語音辨識和視覺內容分析。系統能夠識別指示詞（如「這個」、「藍色部分」）並提取相應時刻的畫面，用視覺分析補充文字說明。目標是讓使用者可以單看文字檔就理解影片內容。
+自動將影片內容轉換為文字檔，包括語音辨識和視覺內容分析。系統能夠識別指示詞（如「這個」、「藍色部分」、「this function」）並提取相應時刻的畫面，用 AI 視覺分析補充文字說明。支援中英文自動偵測。目標是讓使用者可以單看文字檔就理解影片內容。
 
-**語言**: 中文 | **Python**: 3.10+
+**語言**: 中文 | English | **Python**: 3.10+
 
 ---
 
@@ -13,28 +13,31 @@
 ```
 影片 
   ↓
-【步驟1】語音轉逐字稿 (Faster-Whisper)
+【步驟1】語音轉逐字稿 + 語言自動偵測 (Faster-Whisper)
   ↓
-【步驟2】偵測指示詞 (Regex 配對)
+【步驟2】多語言指示詞檢測 + 三層智能過濾
+  • 第一層：規則檢測 (語法模式)
+  • 第二層：AI 判斷 (Gemini 決策)
+  • 第三層：視覺分析 (完整分析)
   ↓
-【步驟3】根據指示詞截幀 (FFmpeg)
+【步驟3】精確秒數截幀 (FFmpeg ± 0.1秒)
   ↓
-【步驟4】視覺分析 (Ollama LLaVA/Qwen)
+【步驟4】視覺分析 (Gemini 3.1 Flash Lite)
   ↓
-【步驟5】融合 (字符串替換)
+【步驟5】補充式融合 + 句子合併 (保留原文)
   ↓
-融合逐字稿 + JSON 數據
+融合逐字稿 + JSON 詳細數據 + 可讀性優化
 ```
 
 ### 核心功能
 
 | 模塊 | 功能 | 狀態 |
 |------|------|------|
-| **Transcriber** | 語音轉文字，添加時間戳 `[H:MM:SS]` | ✅ 完成 |
-| **DeicticDetector** | 檢測指示詞（這、那、藍色、前面等） | ✅ 完成 |
-| **FrameExtractor** | 在指示詞時刻提取視頻幀 | ✅ 完成 |
-| **VisionAnalyzer** | 用 Ollama 分析圖片內容 | ✅ 完成 |
-| **FusionEngine** | 用視覺描述替換指示詞 | ✅ 完成 |
+| **Transcriber** | 語音轉文字 + 語言自動偵測 + 時間戳 `[H:MM:SS]` | ✅ 完成 |
+| **DeicticDetector** | 多語言指示詞檢測 + 三層智能過濾 | ✅ 完成 |
+| **FrameExtractor** | 精確秒數截幀（±0.1秒） | ✅ 完成 |
+| **VisionAnalyzer** | Gemini 3.1 Flash Lite 視覺分析 | ✅ 完成 |
+| **FusionEngine** | 補充式融合 + 句子合併 | ✅ 完成 |
 
 ---
 
@@ -47,10 +50,9 @@
   - Windows: `choco install ffmpeg`
   - Mac: `brew install ffmpeg`
   - Linux: `apt install ffmpeg`
-- **Ollama** - 多模態視覺分析
-  - 下載: https://ollama.ai
-  - 啟動: `ollama serve`
-  - 拉取模型: `ollama pull qwen2.5vl:7b` 或 `ollama pull llava:latest`
+- **Gemini API** - 多模態視覺分析
+  - 申請 API Key: https://aistudio.google.com
+  - 設置環境變數或 `.env` 文件
 
 ### Python Kit
 
@@ -59,8 +61,8 @@
 faster-whisper>=1.0.0
 ffmpeg-python==0.2.0
 requests>=2.31.0
-ollama>=0.1.0
-pydantic>=2.0.0
+google-generativeai>=0.3.0
+python-dotenv>=0.19.0
 ```
 
 ---
@@ -88,44 +90,48 @@ pip install -r requirements.txt
 
 ### 2️⃣ 配置
 
-編輯 `config.py`：
+**使用 `.env` 文件（推薦）**
+
+複製 `.env.example` 為 `.env` 並填入：
+```ini
+GEMINI_API_KEY=your-api-key-here
+```
+
+**編輯 `config.py`**
 
 ```python
 # 模型配置
 DEVICE = "cpu"  # 或 "cuda"
 WHISPER_MODEL = "base"  # "tiny", "small", "base", "medium", "large"
-LLAVA_MODEL = "qwen2.5vl:7b"  # 或 "llava:latest"
+GEMINI_MODEL = "gemini-3.1-flash-lite"  # 多模態視覺分析 text-out models
 
-# Ollama 設置
-OLLAMA_BASE_URL = "http://localhost:11434"
-
-# 指示詞列表（可自訂）
-DEICTIC_WORDS = ["這", "那", "這個", "藍色", "前面", "後面", ...]
+# Gemini API（從 .env 讀取）
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ```
 
 ### 3️⃣ 運行完整管線
 
 ```bash
-python tests/test_complete_pipeline.py <Video path> <逐字稿JSON path>
+# 基本用法：自動轉錄 + 偵測 + 截幀 + 分析 + 融合
+python tests/test_complete_pipeline.py "your_video"
 
-# 範例
-python tests/test_complete_pipeline.py demo_video/video_demo1.mp4 outputs/transcripts/video_demo1.json
+# 進階用法：使用已經存在的的逐字稿
+python tests/test_complete_pipeline.py "your_video" "your_video_transcript_json"
 ```
+
+詳見 [tests/README_tests.md](tests/README_tests.md) 了解各個單元測試
 
 ### 📤 輸出文件
 
 ```
 outputs/
 ├── transcripts/
-│   └── video_demo1.json          # 原始逐字稿（時間戳+文字）
+│   └── <video_name>.json          # 原始逐字稿（時間戳+文字+語言+精確秒數）
 ├── frames/
-│   ├── 0_00_00.jpg
-│   ├── 0_00_34.jpg
-│   └── ...                        # 截取的畫面(幀)
+│   └── <video_name>_MM_SS_precise_X_XX.jpg  # 精確秒數截幀
 └── results/
-    ├── video_demo1.txt            # 融合後的可讀逐字稿
-    ├── video_demo1_fusion.json     # 融合詳細數據
-    └── video_demo1_deictic.json    # 指示詞檢測結果
+    ├── <video_name>.txt           # 融合後的可讀逐字稿
+    └── <video_name>_fusion.json    # 融合詳細數據
 ```
 
 ---
@@ -136,105 +142,128 @@ outputs/
 visual-video-transcription/
 ├── README.md                      # 本檔案
 ├── requirements.txt               # Python dependency
-├── config.py                      # Configuration
+├── config.py                      # 中心化配置（模型、詞表、路徑）
+├── .env.example                   # API Key 模板
+├── .gitignore                     # 安全排除 .env 和輸出文件
 ├── utils.py                       # 工具函數
-│   ├── seconds_to_timestamp()     # 轉換秒數為 [0:MM:SS] 格式
-│   ├── find_deictic_words()       # 尋找指示詞
-│   └── build_prompt_for_vision()  # 為視覺分析生成提示詞
+│   ├── seconds_to_timestamp()     # 轉換秒數為 [H:MM:SS] 格式
+│   ├── timestamp_to_seconds()     # 轉換時間戳為秒數
+│   ├── find_deictic_words()       # 多語言指示詞尋找
+│   ├── check_skip_pattern()       # 第一層：語法過濾
+│   ├── ask_vision_decision()      # 第二層：AI 輕量判斷
+│   └── decide_vision_needed()     # 三層法 main
 │
 ├── modules/
-│   ├── transcriber.py             # 語音轉文字
+│   ├── transcriber.py             # 語音轉文字 + 語言自動偵測
 │   │   └── Transcriber class: transcribe(), save_transcript()
-│   ├── deictic_detector.py        # 指示詞偵測
+│   ├── deictic_detector.py        # 多語言指示詞偵測 + 精確時間
 │   │   └── DeicticDetector class: detect_from_transcript()
-│   ├── frame_extractor.py         # 影片畫面幀提取（FFmpeg）
+│   ├── frame_extractor.py         # 精確秒數截幀 (FFmpeg)
 │   │   └── FrameExtractor class: extract_frames_from_deictic()
-│   ├── vision_analyzer.py         # 視覺分析
+│   ├── vision_analyzer.py         # Gemini 視覺分析
 │   │   └── VisionAnalyzer class: analyze_image(), analyze_frames_batch()
-│   └── fusion_engine.py           # 融合引擎
+│   └── fusion_engine.py           # 補充式融合 + 句子合併
 │       └── FusionEngine class: fuse()
 │
 ├── tests/
-│   ├── test_complete_pipeline.py  # 完整 pipeline 測試
-│   └── test_vision_concise.py     # 簡潔視覺分析測試
+│   ├── README_tests.md            # 測試使用說明
+│   ├── test_complete_pipeline.py  # 完整 pipeline 測試（推薦）
+│   ├── test_transcriber.py        # 語音轉文字測試
+│   ├── test_deictic_detector.py   # 指示詞檢測測試
+│   ├── test_frame_extractor.py    # 截幀測試
+│   ├── test_vision_analyzer.py    # 視覺分析測試
+│   └── test_fusion_engine.py      # 融合測試
 │
-├── outputs/                       # （不上傳到 Git）
+├── outputs/                       # （不上傳 Git）
 │   ├── transcripts/               # 原始逐字稿
-│   ├── frames/                    # 提取的視頻幀
+│   ├── frames/                    # 截幀
 │   └── results/                   # 融合結果
 │
-└── demo_video/                    # （不上傳到 Git）
-    └── video_demo1.mp4            # 示例視頻
+└── demo_video/                    # （不上傳 Git）
+    └── <sample_video.mp4>
 ```
 
 ---
 
 ## 🔄 Data Flow Example
 
-### 輸入：影片檔案 + 逐字稿
+### 輸入：影片檔案 + 自動逐字稿
 
-**原始逐字稿** (`video_demo1.json`):
+**原始逐字稿** (自動生成或提供):
 ```json
 {
+  "filename": "tutorial_math.mp4",
+  "language": "zh",
   "segments": [
     {
-      "time": "[0:00:00]",
-      "text": "各位同學好,這一節我們要介紹多變數函數...",
-      "start": 0.0,
-      "end": 5.2
+      "time": "[0:00:15]",
+      "text": "各位同學好，這個公式展示了鏈式法則...",
+      "start": 15.0,
+      "end": 22.5
     }
   ]
 }
 ```
 
-### 中間：指示詞偵測
+### 中間：三層過濾決策
 
+**Layer 1 結果** (規則檢測):
+```
+"這個公式展示了" → 規則不匹配 → 繼續 Layer 2
+```
+
+**Layer 2 結果** (AI 輕量判斷):
+```
+Gemini: "Is '這個' referring to visual content?"
+Response: YES → 需要視覺分析
+```
+
+**Layer 3 結果** (完整視覺分析):
 ```json
 {
-  "deictic_words": [
-    {
-      "timestamp": "[0:00:00]",
-      "word": "這",
-      "position": 6,
-      "context_before": "各位同學好,",
-      "context_after": "一節我們要介紹多變數函數..."
-    }
-  ]
+  "image": "tutorial_math_0_00_15_precise_3_42.jpg",
+  "description": "白板上的藍色公式，展示了 Chain Rule 的定義"
 }
 ```
 
-### 中間：視覺分析
+### 輸出：融合逐字稿（可讀 + 結構化）
 
+**文本版** (`tutorial_math.txt`):
+```
+[0:00:15] 各位同學好，這個[白板上的藍色公式，展示了鏈式法則的定義]公式展示了鏈式法則...
+```
+
+**JSON 版** (`tutorial_math_fusion.json`):
 ```json
 {
-  "analyses": [
-    {
-      "image_path": "outputs/frames/0_00_00.jpg",
-      "description": "圖片顯示了一個數學教學投影片，標題是 The Chain Rule...",
-      "success": true
-    }
-  ]
-}
-```
-
-### 輸出：融合逐字稿
-
-**文本版** (`video_demo1.txt`):
-```
-[0:00:00] 各位同學好,〔畫面：圖片顯示了一個數學教學投影片，標題是 The Chain Rule，展示了鏈式法則的定義和應用例子。〕一節我們要介紹多變數函數...
-```
-
-**JSON 版** (`video_demo1_fusion.json`):
-```json
-{
+  "filename": "tutorial_math.mp4",
+  "language": "zh",
   "segments": [
     {
-      "time": "[0:00:00]",
-      "text": "各位同學好,〔畫面：...〕一節我們要介紹多變數函數...",
+      "time": "[0:01:06]",
+      "text": "然後在乘上,裡面這[\\sin(x^2)]一層就是Sine X是平方的圍分,接下來我們在對這個[\\sin(x^2)]藍色的部分進行圍分,因此前面的部分照超,那後面Sine的圍分就變成Cosine,取值在X是平方,",
+      "original_text": "然後在乘上,裡面這一層就是Sine X是平方的圍分,接下來我們在對這個藍色的部分進行圍分,因此前面的部分照超,那後面Sine的圍分就變成Cosine,取值在X是平方,",
       "replacements": [
         {
+          "word": "這個",
+          "position": 33,
+          "supplement": "\\sin(x^2)"
+        },
+        {
           "word": "這",
-          "description": "圖片顯示了一個數學教學投影片..."
+          "position": 8,
+          "supplement": "\\sin(x^2)"
+        }
+      ],
+      "modified": true,
+      "precise_times": [
+        {
+          "word": "這個",
+          "precise_seconds": 75.3655421686747
+        },
+        {
+          "word": "這",
+          "precise_seconds": 68.80831325301205
         }
       ]
     }
@@ -244,89 +273,111 @@ visual-video-transcription/
 
 ---
 
-## 🎨 視覺分析提示詞優化
+## 三層過濾系統詳解
 
-### 改進策略
+**簡單板問題**（每個指示詞都做完整視覺分析）：
+- 成本高：每個指示詞 = 1 次 API 調用
+- 文本長：描述過度詳細
+- 低效：很多指示詞不需要視覺分析（如"這就是"、"that is"）
 
-系統根據是否有指示詞生成不同的提示詞：
+**解決方案**: 三層漸進式過濾
 
-**有指示詞時** （簡潔模式）:
 ```
-請只描述圖片中和「這個」相關的部分。
-要求：
-1. 簡潔明了 - 2-3句話就夠
-2. 只說「這個」指的是什麼
-3. 包含：顏色、位置、內容
-4. 不要描述其他無關部分
+┌─────────────────────────────────────────┐
+│ 第一層：規則檢測                         │
+│ SKIP_PATTERNS 匹配                      │
+│ ✅ "這就是" → 跳過                      │
+│ ✅ "那表示" → 跳過                      │
+│ ✅ "that is why" → 跳過                │
+└─────────────────────────────────────────┘
+                    ↓ (未匹配)
+┌─────────────────────────────────────────┐
+│ 第二層：AI 輕量決策                      │
+│ Gemini Flash 二元問題                   │
+│ Prompt: "是物理還是概念？"               │
+│ Response: YES/NO                        │
+└─────────────────────────────────────────┘
+                    ↓ (YES)
+┌─────────────────────────────────────────┐
+│ 第三層：完整視覺分析                      │
+│ 提取幀 + 詳細分析                        │
+│ 返回精細的視覺描述                       │
+└─────────────────────────────────────────┘
 ```
 
-**無指示詞時** （完整模式）:
-```
-請詳細分析這張圖片。特別要提到：
-1. 【文字和公式】...
-2. 【顏色和標示】...
-3. 【位置和布局】...
-4. 【對象和內容】...
-```
-
-### 輸出改進效果
-
-| 場景 | 之前 | 之後 |
-|------|------|------|
-| 有指示詞「藍色部分」 | ~300 字（5 點詳細分析） | ~80 字（1-2 句簡潔說明） |
-| 重複指示詞 | 重複完整分析 | 短小精悍 |
-| 文本可讀性 | ❌ 冗長臃腫 | ✅ 清晰簡潔 |
+**成本結果**: 假設 1000 個指示詞
+- 第一層篩除 300 個
+- 第二層篩除 500 個
+- 第三層分析 200 個
+- **總成本降低**
 
 ---
 
 ## 📊 目前進度
 
 ### ✅ 已完成
-- [x] 核心模塊架構設計（5 個模塊）
-- [x] 語音轉文字 (Faster-Whisper)
-- [x] 指示詞檢測 (Regex 配對)
+- [x] 核心 module 架構設計（5 modules）
+- [x] 語音轉文字 + 語言自動偵測 (Faster-Whisper)
+- [x] 多語言指示詞檢測（中英文）
+- [x] 三層智能過濾系統（規則 + AI + 視覺）
+- [x] 精確秒數定位（±0.1秒）
 - [x] 視頻幀提取 (FFmpeg)
-- [x] 視覺分析集成 (Ollama)
-- [x] 融合引擎（字符串替換）
+- [x] Gemini 3.1 Flash Lite 視覺分析集成
+- [x] 補充式融合引擎（保留原文）
+- [x] 句子合併優化（可讀性）
+- [x] 安全配置 (.env + .gitignore)
 - [x] 完整管線測試
-- [x] 視覺提示詞優化（簡潔化）
+- [x] 單元測試覆蓋
 - [x] 配置中心化
 - [x] 工具函數模塊化
 
 ### 🚧 進行中 / 計劃中
 
-- [ ] API 串聯 Gemini (Gemini 3.1 - flash lite)
-- [ ] 提高畫面辨識能力
-- [ ] 簡短說明畫面
-- [ ] LLM 語義融合（更自然的文本流暢度）
-- [ ] 相同時刻多個指示詞多個描述
-- [ ] 輸出格式優化（Markdown, HTML）
-- [ ] 支持多語言（英文、日文等）
+- [ ] 影片加字幕功能
+  - 將融合逐字稿渲染為 SRT/VTT 字幕
+  - 時間軸精確同步
+
+- [ ] 語義搜索引擎
+  - 支持嵌入向量檢索或輕量級檢索
+  - 在前文中找到匹配內容
+
+- [ ] 回想內容識別與時間戳
+  - 偵測「剛剛提到的」、「前面說過」等回想型指示詞
+  - 語義匹配 + 返回原始時間戳
+  - 融合到逐字稿中
+
+- [ ] 智能截圖相關內容
+  - 提取回想內容對應的幀
+  - 只截圖相關部分（剔除無關背景）
+
+- [ ] 字幕+圖片鑲嵌回影片
+  - 使用 FFmpeg overlay 或 OpenCV
+  - 或轉出 WebVTT + 副本集合格式
+
+- [ ] 滑鼠/指標偵測
+- [ ] LLM 語義修正、錯字修改
+- [ ] 相同時刻多個指示詞多個描述自動去重
+- [ ] 輸出格式優化（Markdown, HTML, SRT 字幕）
 - [ ] 性能優化（並行幀分析）
-- [ ] UI / Web 介面
-- [ ] 單元測試覆蓋
-- [ ] 文檔完善
-
-### ⚠️ 已知問題
-
-1. **FFmpeg 依賴** - 需要系統級安裝，不在 Python dependency 中
-2. **Ollama 推理速度** - 大模型推理較慢，GPU 加速需要 CUDA 支持
-3. **記憶體占用** - LLaVA/Qwen 模型較大（7B 參數）
-4. **多個指示詞時間重疊** - 目前不做自動去重
-5. **非中文內容** - 主要針對中文優化
 
 ---
 
 ## 🛠️ 開發指南
 
-### 運行個別模塊測試
+### 運行個別 module 測試
+
+詳見 [tests/README_tests.md](tests/README_tests.md)：
 
 ```bash
-# 只測試視覺分析
-python test_vision_concise.py
+# 運行完整 pipeline （推薦）
+python tests/test_complete_pipeline.py <video_file>
 
-# 運行完整管線
-python tests/test_complete_pipeline.py <video_path> <transcript_path>
+# 或測試單個 moudule
+python tests/test_transcriber.py <video_file>
+python tests/test_deictic_detector.py <transcript_json>
+python tests/test_frame_extractor.py <video_file> <transcript_json>
+python tests/test_vision_analyzer.py <frame_file>
+python tests/test_fusion_engine.py <transcript_json>
 ```
 
 ### 修改配置
@@ -334,59 +385,75 @@ python tests/test_complete_pipeline.py <video_path> <transcript_path>
 編輯 `config.py` 調整：
 - 模型大小 (`WHISPER_MODEL`)
 - 計算設備 (`DEVICE = "cpu"` 或 `"cuda"`)
-- 視覺模型 (`LLAVA_MODEL`)
-- 指示詞列表 (`DEICTIC_WORDS`)
+- Gemini 模型 (`DEICTIC_DECISION_MODEL`, `VISION_ANALYSIS_MODEL`)
+- 指示詞列表 (`DEICTIC_WORDS_ZH`, `DEICTIC_WORDS_EN`)
+- 過濾規則 (`SKIP_PATTERNS_ZH`, `SKIP_PATTERNS_EN`)
 
 ### 擴展指示詞
 
-在 `config.py` 中修改 `DEICTIC_WORDS`:
+在 `config.py` 中修改對應語言的詞表：
 
 ```python
-DEICTIC_WORDS = [
+# 中文
+DEICTIC_WORDS_ZH = [
     "這", "那", "這個", "那個",
     "這裡", "那裡",
     "前面", "後面", "左邊", "右邊", "上面", "下面", "中間",
     "藍色", "紅色", "綠色",  # 可加入顏色
     # ... 自訂指示詞
 ]
+
+# 英文
+DEICTIC_WORDS_EN = [
+    "this", "that", "here", "there",
+    "left", "right", "top", "bottom", "middle",
+    # ... 自訂指示詞
+]
 ```
 
----
-
-## 📝 使用範例
-
-### 完整流程
-
-```bash
-# 1. 確保 Ollama 正在運行
-ollama serve
-
-# 2. 新開終端，啟動虛擬環境
-cd visual-video-transcription
-.\.venv_videotrans\Scripts\Activate.ps1
-
-# 3. 運行 pipeline
-python tests/test_complete_pipeline.py my_video.mp4 my_transcript.json
-
-# 4. 查看結果
-type outputs/results/my_video.txt
-```
-
-### 自訂逐字稿
-
-如果沒有現成的 JSON 逐字稿，可以：
+### 在 Python 專案中引用 module
 
 ```python
 from modules.transcriber import Transcriber
+from modules.deictic_detector import DeicticDetector
+from modules.frame_extractor import FrameExtractor
+from modules.vision_analyzer import VisionAnalyzer
+from modules.fusion_engine import FusionEngine
 
+# 1. 轉錄
 transcriber = Transcriber()
-result = transcriber.transcribe("my_video.mp4")
+transcript = transcriber.transcribe("my_video.mp4")
 transcriber.save_transcript("my_transcript.json")
+
+# 2. 檢測指示詞
+detector = DeicticDetector()
+deictic_data = detector.detect_from_transcript("my_transcript.json")
+
+# 3. 提取幀
+extractor = FrameExtractor("my_video.mp4")
+frames = extractor.extract_frames_from_deictic(deictic_data)
+
+# 4. 視覺分析
+analyzer = VisionAnalyzer()
+analyses = analyzer.analyze_frames_batch(frames)
+
+# 5. 融合結果
+fusion = FusionEngine()
+result = fusion.fuse(transcript, analyses)
 ```
 
 ---
 ## Version History
 
+### v1.0.0 (2026-05-15)
+  - ✅ 完整 5 module 系統
+  - ✅ 多語言支持（中英文自動偵測）
+  - ✅ 三層智能過濾系統（規則 + AI + 視覺）
+  - ✅ 精確秒數定位（±0.1秒）
+  - ✅ Gemini 3.1 Flash Lite 集成
+  - ✅ 安全 .env 配置
+  - ✅ 句子合併（可讀性優化）
+  - ✅ 完整測試文檔和使用指南
 
 ### v0.1.0 (2026-05-14)
   - ✅ 5 個核心模塊完成
@@ -399,13 +466,12 @@ transcriber.save_transcript("my_transcript.json")
 
 ## 🎓 參考資料
 
-- [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) - 語音辨識
-- [Ollama](https://ollama.ai) - 本地 LLM 運行
-- [FFmpeg](https://ffmpeg.org) - 影片處理
-- [LLaVA](https://github.com/haotian-liu/LLaVA) - 視覺語言模型
-- [Qwen2.5-VL](https://github.com/QwenLM/Qwen2.5-VL) - 多模態視覺模型
+- [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) - 快速語音辨識引擎
+- [Gemini API](https://ai.google.dev/) - Google 多模態 AI 服務
+- [FFmpeg](https://ffmpeg.org) - 多功能媒體框架
 
 ---
 
-**最後更新**: 2026-05-14  
-**狀態**: 🚀 主要功能完成，持續優化中
+**最後更新**: 2026-05-15  
+**版本**: v1.0.0  
+**狀態**: 功能完整，已驗證，持續優化

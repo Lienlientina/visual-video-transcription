@@ -95,9 +95,48 @@ class Transcriber:
             "segments": result_segments
         }
         
-        print(f"[Transcriber] 轉錄完成，共 {len(result_segments)} 個片段")
+        # ← 新增：根據實際文本內容修正語言判斷
+        detected_language = self._detect_content_language(result_segments)
+        if detected_language != info.language:
+            print(f"[Transcriber] ⚠️  語言修正: {info.language} → {detected_language}")
+            result["language"] = detected_language
+        
+        print(f"[Transcriber] 轉錄完成，共 {len(result_segments)} 個片段，語言: {result['language']}")
         
         return result
+    
+    def _detect_content_language(self, segments: List[Dict]) -> str:
+        """
+        根據實際文本內容的英文/中文字符比例來判斷主要語言
+        
+        Args:
+            segments: 轉錄片段列表
+        
+        Returns:
+            str: 語言代碼 ("zh" 或 "en")
+        """
+        # 合併所有文本
+        all_text = " ".join([seg["text"] for seg in segments])
+        
+        # 統計中文字符（CJK 統一表意文字）
+        chinese_count = sum(1 for c in all_text if '\u4e00' <= c <= '\u9fff')
+        
+        # 統計英文字母
+        english_count = sum(1 for c in all_text if c.isalpha() and ord(c) < 128)
+        
+        # 判斷主要語言（閾值：英文占 > 60% 則判為英文）
+        total_chars = chinese_count + english_count
+        if total_chars == 0:
+            return "en"  # 預設英文（通常是沒有字符的情況）
+        
+        english_ratio = english_count / total_chars
+        
+        print(f"[Transcriber] 語言分析: 中文 {chinese_count}, 英文 {english_count}, 英文比例 {english_ratio:.1%}")
+        
+        if english_ratio > 0.6:
+            return "en"
+        else:
+            return "zh"
     
     def save_transcript(self, transcript: Dict, output_name: str = None) -> Path:
         """

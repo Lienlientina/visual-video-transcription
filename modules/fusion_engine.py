@@ -76,15 +76,13 @@ class FusionEngine:
         print(f"  - 指示詞數: {len(deictic_data.get('deictic_words', []))}")
         print(f"  - 視覺描述: {len(vision_data.get('analyses', []))}")
         
-        # 建立時間戳 → 視覺描述的映射
+        # 建立時間戳 → 視覺描述的映射（直接用 timestamp，不依賴檔名）
         vision_map = {}
         for analysis in vision_data.get("analyses", []):
             if analysis.get("success"):
-                # 從圖片名稱推斷時間戳
-                # 例如 outputs/frames/0_00_05.jpg → [0:00:05]
-                image_name = Path(analysis["image_path"]).stem
-                timestamp = self._filename_to_timestamp(image_name)
-                vision_map[timestamp] = analysis["description"]
+                timestamp = analysis.get("timestamp")  # ← 直接取得時間戳
+                if timestamp:
+                    vision_map[timestamp] = analysis["description"]
         
         # 融合邏輯：逐段落替換指示詞
         fused_segments = []
@@ -109,26 +107,38 @@ class FusionEngine:
                 pos = deictic_word["position_in_segment"]
                 end = deictic_word.get("position_in_segment") + len(word)
                 
+                # ← 新增：檢查是否需要視覺分析
+                if not deictic_word.get("need_vision", True):
+                    continue
+                
                 # 查找視覺描述
                 description = vision_map.get(segment_time, "")
                 
                 if description:
-                    # 替換為「〔畫面：描述〕」格式
-                    replacement_text = f"〔畫面：{description}〕"
-                    fused_text = fused_text[:pos] + replacement_text + fused_text[end:]
+                    # ← 改動：在指示詞後面插入括號補充，而非替換
+                    # 例如：「這個藍色部分」→ 「這個藍色部分(sin(x^2))」
+                    supplement_text = f"[{description}]"
+                    fused_text = fused_text[:end] + supplement_text + fused_text[end:]
                     
                     replacements.append({
                         "word": word,
                         "position": pos,
-                        "description": description
+                        "supplement": description  # ← 改名：補充而非描述
                     })
             
             fused_segments.append({
-                "time": segment_time,
+                "time": segment_time,  # 保留原始 segment 時間
                 "text": fused_text,
                 "original_text": original_text,
                 "replacements": replacements,
-                "modified": len(replacements) > 0
+                "modified": len(replacements) > 0,
+                "precise_times": [  # ← 新增：記錄此段落中所有指示詞的精確秒數
+                    {
+                        "word": d["word"],
+                        "precise_seconds": d.get("position_in_seconds", d.get("start_seconds", 0.0))
+                    }
+                    for d in matching_deictic_words if d.get("need_vision", True)
+                ]
             })
         
         result = {
@@ -143,22 +153,6 @@ class FusionEngine:
         print(f"  - 總替換數: {result['total_replacements']}")
         
         return result
-    
-    def _filename_to_timestamp(self, filename: str) -> str:
-        """
-        從檔名轉換回時間戳
-        例如 0_00_05 → [0:00:05]
-        
-        Args:
-            filename (str): 檔名（不含副檔名）
-        
-        Returns:
-            str: 時間戳，例如 [0:00:05]
-        """
-        parts = filename.split("_")
-        if len(parts) >= 3:
-            return f"[{parts[0]}:{parts[1]}:{parts[2]}]"
-        return ""
     
     def save_fused_transcript(self, fused_data: Dict, output_name: str = None) -> Path:
         """
@@ -176,22 +170,87 @@ class FusionEngine:
         
         output_path = RESULTS_DIR / f"{output_name}.txt"
         
+        # ← 新增：合併短句子成完整段落
+        merged_segments = self._merge_short_segments(fused_data["segments"])
+        
         # 輸出為可讀的文本格式
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write("===== 融合逐字稿 =====\n\n")
             
-            for segment in fused_data["segments"]:
-                f.write(f"{segment['time']} {segment['text']}\n")
+            for segment in merged_segments:
+                # 輸出 segment 時間
+                f.write(f"{segment['time']}")
                 
-                if segment["replacements"]:
-                    for replacement in segment["replacements"]:
-                        f.write(f"  [替換] 「{replacement['word']}」→ 「{replacement['description']}」\n")
+                # ← 改進：如果有精確秒數或視覺補充，顯示詳情
+                metadata = []
+                if segment.get("precise_times"):
+                    precise_info = ", ".join([
+                        f"{item['word']}@{item['precise_seconds']:.2f}s"
+                        for item in segment["precise_times"][:3]
+                    ])
+                    metadata.append(f"精確: {precise_info}")
                 
-                f.write("\n")
+                # ← 新增：顯示視覺補充信息
+                if segment.get("replacements"):
+                    replacement_info = ", ".join([
+                        f"{r['word']}→視覺"
+                        for r in segment["replacements"][:2]
+                    ])
+                    metadata.append(f"補充: {replacement_info}")
+                
+                if metadata:
+                    f.write(f" [{', '.join(metadata)}]")
+                
+                f.write(f"\n{segment['text']}\n\n")
         
         print(f"[FusionEngine] 融合逐字稿已保存至: {output_path}")
         
         return output_path
+    
+    def _merge_short_segments(self, segments: list, min_length: int = 50) -> list:
+        """
+        合併短句子成完整段落（避免文字碎片化）
+        
+        Args:
+            segments (list): 原始 segments
+            min_length (int): 最小段落長度，低於此值會與下一個合併
+        
+        Returns:
+            list: 合併後的 segments
+        """
+        if not segments:
+            return []
+        
+        merged = []
+        current_segment = None
+        
+        for segment in segments:
+            text = segment.get("text", "").strip()
+            
+            # 如果當前文本為空或只有標點符號，跳過
+            if not text or len(text) < 2:
+                continue
+            
+            # 如果是第一個 segment 或前一個已經夠長，開始新段落
+            if current_segment is None or len(current_segment.get("text", "")) >= min_length:
+                current_segment = segment.copy()
+                merged.append(current_segment)
+            else:
+                # 合併到前一個 segment
+                current_segment["text"] += " " + text
+                
+                # ← 新增：合併 replacements（保留視覺補充信息）
+                if segment.get("replacements"):
+                    current_segment.setdefault("replacements", []).extend(segment["replacements"])
+                
+                # 合併 precise_times（精確秒數）
+                if segment.get("precise_times"):
+                    current_segment.setdefault("precise_times", []).extend(segment["precise_times"])
+                
+                # 標記為已修改
+                current_segment["modified"] = current_segment["modified"] or segment.get("modified", False)
+        
+        return merged
     
     def export_as_json(self, fused_data: Dict, output_name: str = None) -> Path:
         """

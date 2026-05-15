@@ -161,18 +161,38 @@ class FrameExtractor:
         
         results = []
         failed_words = []
+        skipped_words = []  # ← 新增：記錄跳過的詞
         
         for idx, word_info in enumerate(deictic_words, 1):
+            # ← 新增：檢查是否需要視覺分析
+            if not word_info.get("need_vision", True):
+                skipped_words.append(word_info)
+                print(f"  [{idx}/{len(deictic_words)}] ⊘ {word_info['time']} 「{word_info['word']}」跳過（不需要視覺分析）")
+                continue
+            
             try:
                 timestamp = word_info["time"]
                 word = word_info["word"]
                 context = word_info.get("context", "")
                 
-                # 轉換時間戳為秒數
-                seconds = timestamp_to_seconds(timestamp)
+                # ← 改進：優先使用精確秒數，否則轉換時間戳
+                if "position_in_seconds" in word_info:
+                    seconds = word_info["position_in_seconds"]  # 精確秒數
+                    print(f"  [{idx}/{len(deictic_words)}] 使用精確秒數: {seconds:.2f}s")
+                else:
+                    seconds = timestamp_to_seconds(timestamp)  # 回退到 segment 開始時間
                 
-                # 生成輸出檔名
-                filename = timestamp.replace("[", "").replace("]", "").replace(":", "_") + ".jpg"
+                # ← 改進：生成更精確的檔名，包含秒數（浮點）
+                video_stem = video_path.stem
+                time_part = timestamp.replace("[", "").replace("]", "").replace(":", "_")
+                
+                # 如果有精確秒數，添加到檔名中
+                if "position_in_seconds" in word_info:
+                    precise_time = f"{seconds:.2f}".replace(".", "_")  # "6.85" → "6_85"
+                    filename = f"{video_stem}_{time_part}_precise_{precise_time}.jpg"
+                else:
+                    filename = f"{video_stem}_{time_part}.jpg"
+                
                 output_path = FRAMES_DIR / filename
                 
                 # 使用 ffmpeg 截幀
@@ -196,7 +216,8 @@ class FrameExtractor:
                 
                 results.append({
                     "timestamp": timestamp,
-                    "path": str(output_path),  # 改為絕對路徑
+                    "precise_seconds": word_info.get("position_in_seconds", seconds),  # ← 新增
+                    "path": str(output_path),
                     "word": word,
                     "context": context
                 })
@@ -215,10 +236,13 @@ class FrameExtractor:
             "total_deictic_words": len(deictic_words),
             "success_frames": len(results),
             "failed_frames": len(failed_words),
+            "skipped_frames": len(skipped_words),  # ← 新增
             "frames": results
         }
         
-        print(f"\n[FrameExtractor] 截幀完成: {len(results)}/{len(deictic_words)} 成功")
+        print(f"\n[FrameExtractor] 截幀完成: {len(results)} 成功 / {len(skipped_words)} 跳過 / {len(failed_words)} 失敗（共 {len(deictic_words)}）")
+        if skipped_words:
+            print(f"[FrameExtractor] 跳過指示詞: {[w['word'] for w in skipped_words]}")
         if failed_words:
             print(f"[FrameExtractor] 失敗指示詞: {[w['word'] for w in failed_words]}")
         

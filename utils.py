@@ -2,7 +2,112 @@
 通用工具函數 - 時間轉換、指示詞偵測等
 """
 import re
-from config import DEICTIC_WORDS, TIMESTAMP_FORMAT
+from config import (
+    DEICTIC_WORDS_MAP, SKIP_PATTERNS_MAP,
+    DEICTIC_DECISION_MODEL, GEMINI_API_KEY,
+    TIMESTAMP_FORMAT
+)
+
+
+# ============ 三層法：判斷是否需要視覺分析 ============
+
+def check_skip_pattern(sentence, deictic_word, language="zh"):
+    """
+    第一層：語法過濾
+    檢查指示詞前後是否有跳過模式
+    
+    Args:
+        sentence (str): 完整句子
+        deictic_word (str): 指示詞
+        language (str): 語言 ("zh" 或 "en")
+    
+    Returns:
+        bool: True 應該跳過，False 繼續判斷
+    """
+    skip_patterns = SKIP_PATTERNS_MAP.get(language, SKIP_PATTERNS_MAP.get("zh"))
+    
+    for pattern in skip_patterns:
+        if pattern in sentence:
+            return True
+    
+    return False
+
+
+def ask_vision_decision(deictic_word, context_before, context_after, language="zh"):
+    """
+    第二層：輕量 AI 判斷
+    用 Gemini Flash 判斷指示詞是否指代畫面內容
+    
+    Args:
+        deictic_word (str): 指示詞
+        context_before (str): 前文
+        context_after (str): 後文
+        language (str): 語言
+    
+    Returns:
+        bool: True 需要視覺，False 不需要
+    """
+    try:
+        import google.generativeai as genai
+        
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(DEICTIC_DECISION_MODEL)
+        
+        full_context = f"{context_before}{deictic_word}{context_after}"
+        
+        if language == "zh":
+            prompt = f"""在這個句子中：「{full_context}」
+
+「{deictic_word}」是指畫面上的具體物體/位置，還是語言上的概念/抽象參考？
+
+只回答「畫面」或「概念」："""
+        else:  # English
+            prompt = f"""In this sentence: "{full_context}"
+
+Does "{deictic_word}" refer to something visible on screen/in the image, or is it an abstract concept?
+
+Answer only "visual" or "abstract":"""
+        
+        response = model.generate_content(prompt)
+        answer = response.text.strip().lower()
+        
+        # 檢查回答
+        if language == "zh":
+            return "畫面" in answer
+        else:
+            return "visual" in answer
+    
+    except Exception as e:
+        print(f"[Warning] 判斷指示詞『{deictic_word}』失敗: {e}")
+        return False
+
+
+def decide_vision_needed(deictic_word, context_before, context_after, language="zh"):
+    """
+    三層法主函數：判斷是否需要視覺分析
+    
+    層次：
+    1️⃣ 第一層：語法過濾 - 快速排除不需要看畫面的情況
+    2️⃣ 第二層：AI 輕量判斷 - 判斷是畫面還是概念
+    3️⃣ 第三層：視覺分析 - 只在前兩層都通過時調用
+    
+    Args:
+        deictic_word (str): 指示詞
+        context_before (str): 前文（前20字）
+        context_after (str): 後文（後20字）
+        language (str): 語言 ("zh" 或 "en")
+    
+    Returns:
+        bool: True 需要視覺分析，False 不需要
+    """
+    full_context = f"{context_before}{deictic_word}{context_after}"
+    
+    # ❌ 第一層：語法過濾 - 快速排除
+    if check_skip_pattern(full_context, deictic_word, language):
+        return False
+    
+    # ❓ 第二層：AI 輕量判斷
+    return ask_vision_decision(deictic_word, context_before, context_after, language)
 
 
 def seconds_to_timestamp(seconds):
@@ -46,24 +151,28 @@ def timestamp_to_seconds(timestamp_str):
     return 0
 
 
-def find_deictic_words(text):
+def find_deictic_words(text, language="zh"):
     """
     在文本中找出所有指示詞及其位置
     
     Args:
         text (str): 文本內容
+        language (str): 語言 ("zh" 或 "en")
     
     Returns:
-        list: [{"word": "這個", "pos": 5, "index": 0}, ...]
+        list: [{"word": "這個", "pos": 5, "end": 7}, ...]
     
     Examples:
         >>> find_deictic_words("把這個公式代入那個方程式")
-        [{'word': '這個', 'pos': 2}, {'word': '那個', 'pos': 8}]
+        [{'word': '這個', 'pos': 2, 'end': 4}, {'word': '那個', 'pos': 8, 'end': 10}]
     """
     results = []
     
+    # 獲取對應語言的詞表
+    deictic_words = DEICTIC_WORDS_MAP.get(language, DEICTIC_WORDS_MAP.get("zh"))
+    
     # 構建正則模式 - 匹配任何指示詞
-    pattern = '|'.join(re.escape(word) for word in DEICTIC_WORDS)
+    pattern = '|'.join(re.escape(word) for word in deictic_words)
     
     for match in re.finditer(pattern, text):
         results.append({
@@ -77,7 +186,7 @@ def find_deictic_words(text):
 
 def build_prompt_for_vision(image_path, context="", deictic_word=""):
     """
-    為 LLaVA 構建圖片理解提示詞
+    為 Gemini 構建圖片理解提示詞
     
     Args:
         image_path (str): 圖片路徑
@@ -88,66 +197,18 @@ def build_prompt_for_vision(image_path, context="", deictic_word=""):
         str: 提示詞內容
     """
     if deictic_word:
-        # 有指示詞時，只關注指示詞相關的部分
-        prompt = f"""請只描述圖片中和「{deictic_word}」相關的部分。
+        # 有指示詞時，提取簡潔的內容補充
+        prompt = f"""看這張圖片，找出「{deictic_word}」指向的內容。
 
-要求：
-1. 簡潔明了 - 2-3句話就夠
-2. 只說「{deictic_word}」指的是什麼
-3. 包含：顏色、位置、內容
-4. 不要描述其他無關部分
+如果看到：
+- 公式、算式 → 只寫該部分的數學式
+- 文字、代碼 → 只寫該部分的內容
+- 圖形、物體 → 簡單描述該部分（1-2詞）
 
-例如如果「{deictic_word}」是「藍色的框」，就只說「藍色框內有什麼」
-
-上下文：{context if context else '無'}
-
-請用簡潔的中文回答。"""
+不要解釋，直接寫內容。"""
     else:
-        # 沒有指示詞時，全面描述
-        prompt = f"""請詳細分析這張圖片。特別要提到：
-
-1. 【文字和公式】任何可見的文字、算式、公式、代碼
-2. 【顏色和標示】顏色、高亮、箭頭指向等強調
-3. 【位置和布局】元素的位置（上/下/左/右/中間）
-4. 【對象和內容】圖表、圖形、圖片、圖示的具體內容
-
-上下文（逐字稿）：{context if context else '無'}
-
-請用簡明的中文，逐一列出圖片中的關鍵內容。"""
-    
-    return prompt
-
-
-def build_prompt_for_fusion(original_text, visual_descriptions):
-    """
-    為文本融合模型構建提示詞
-    
-    Args:
-        original_text (str): 原始逐字稿，例如 "把這個公式代入"
-        visual_descriptions (list): 視覺描述列表，例如 [{"word": "這個", "desc": "..."}]
-    
-    Returns:
-        str: 融合提示詞
-    """
-    descriptions_str = "\n".join([
-        f"- '{item['word']}' 指的是：{item['desc']}"
-        for item in visual_descriptions
-    ])
-    
-    prompt = f"""請根據視覺描述，將原始逐字稿中的指示詞替換為具體內容。
-
-原始文本：
-{original_text}
-
-視覺描述：
-{descriptions_str}
-
-要求：
-1. 替換指示詞，使用「〔畫面：視覺描述〕」的格式
-2. 保持原文的流暢性和時間戳
-3. 用中文回答
-
-融合後的文本："""
+        # 沒有指示詞時，簡潔描述
+        prompt = f"""簡潔描述這張圖片的主要內容（不超過2句話）。"""
     
     return prompt
 
