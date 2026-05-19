@@ -46,7 +46,7 @@
 ### 軟體依賴
 
 - **Python** 3.10+
-- **FFmpeg** - 視頻幀提取
+- **FFmpeg** - 影片幀提取
   - Windows: `choco install ffmpeg`
   - Mac: `brew install ffmpeg`
   - Linux: `apt install ffmpeg`
@@ -319,17 +319,14 @@ Response: YES → 需要視覺分析
 - [x] 核心 module 架構設計（5 modules）
 - [x] 語音轉文字 + 語言自動偵測 (Faster-Whisper)
 - [x] 多語言指示詞檢測（中英文）
+- [x] LLM 語義修正及錯字修改
 - [x] 三層智能過濾系統（規則 + AI + 視覺）
 - [x] 精確秒數定位（±0.1秒）
-- [x] 視頻幀提取 (FFmpeg)
+- [x] 影片幀提取 (FFmpeg)
 - [x] Gemini 3.1 Flash Lite 視覺分析集成
-- [x] 補充式融合引擎（保留原文）
-- [x] 句子合併優化（可讀性）
-- [x] 安全配置 (.env + .gitignore)
-- [x] 完整管線測試
-- [x] 單元測試覆蓋
-- [x] 配置中心化
-- [x] 工具函數模塊化
+- [x] 句子合併優化（保留原文及可讀性）
+- [x] Pipeline Test
+- [x] Unit Test
 
 ### 🚧 進行中 / 計劃中
 
@@ -355,7 +352,6 @@ Response: YES → 需要視覺分析
   - 或轉出 WebVTT + 副本集合格式
 
 - [ ] 滑鼠/指標偵測
-- [ ] LLM 語義修正、錯字修改
 - [ ] 相同時刻多個指示詞多個描述自動去重
 - [ ] 輸出格式優化（Markdown, HTML, SRT 字幕）
 - [ ] 性能優化（並行幀分析）

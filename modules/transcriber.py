@@ -101,6 +101,9 @@ class Transcriber:
             print(f"[Transcriber] ⚠️  語言修正: {info.language} → {detected_language}")
             result["language"] = detected_language
         
+        # ← 新增：進行語義修正（修正錯字）
+        result = self._correct_transcript(result, result["language"])
+        
         print(f"[Transcriber] 轉錄完成，共 {len(result_segments)} 個片段，語言: {result['language']}")
         
         return result
@@ -137,6 +140,74 @@ class Transcriber:
             return "en"
         else:
             return "zh"
+    
+    def _correct_transcript(self, transcript_json: Dict, language: str) -> Dict:
+        """
+        使用 Gemini 進行語義修正（修正錯字、同音字等）
+        只修改 "text" 字段，完全保留其他欄位格式
+        
+        Args:
+            transcript_json: 轉錄結果 dict
+            language: 語言代碼 ("zh" 或 "en")
+        
+        Returns:
+            dict: 修正後的 transcript_json
+        """
+        try:
+            import google.generativeai as genai
+            from config import GEMINI_API_KEY
+            
+            if not GEMINI_API_KEY:
+                print("[Transcriber] ⚠️  跳過語義修正（未設置 GEMINI_API_KEY）")
+                return transcript_json
+            
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel("gemini-3.1-flash-lite")
+            
+            print(f"[Transcriber] 開始進行語義修正...")
+            
+            corrected_segments = []
+            
+            for i, seg in enumerate(transcript_json["segments"]):
+                # 保留原始所有字段
+                corrected_seg = seg.copy()
+                
+                try:
+                    # 只修正 text 字段
+                    lang_label = "中文" if language == "zh" else "英文"
+                    prompt = f"""請修正以下{lang_label}語音轉錄的錯字，修正以下幾種情況：
+                    1. 同音字錯誤（例如「咋」→「這」、「再」→「在」、"its" -> "it's"）
+                    2. 專有名詞誤認（例如「派森」→「Python」）
+                    3. 明顯的語法或文法錯誤
+                    
+                    只輸出修正後的文本，不要包含任何說明。
+                    
+                    原文：{seg['text']}
+                    
+                    修正後："""
+                    
+                    response = model.generate_content(prompt)
+                    corrected_text = response.text.strip()
+                    
+                    # 只更新 "text" 字段，其他都不動（time, start, end）
+                    corrected_seg["text"] = corrected_text
+                    
+                except Exception as e:
+                    print(f"[Transcriber] ⚠️  segment {i} 修正失敗: {e}，保留原文")
+                    # 失敗就保持原文
+                
+                corrected_segments.append(corrected_seg)
+            
+            # 修改 segments，其他欄位（filename, language）完全不動
+            transcript_json["segments"] = corrected_segments
+            
+            print(f"[Transcriber] 語義修正完成，共 {len(corrected_segments)} 個片段")
+            
+        except Exception as e:
+            print(f"[Transcriber] ❌ 語義修正過程出錯: {e}，跳過修正")
+            # 如果整體失敗，直接返回原文
+        
+        return transcript_json
     
     def save_transcript(self, transcript: Dict, output_name: str = None) -> Path:
         """
