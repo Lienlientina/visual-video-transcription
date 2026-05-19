@@ -175,31 +175,32 @@ class FusionEngine:
         
         # 輸出為可讀的文本格式
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write("===== 融合逐字稿 =====\n\n")
+            # f.write("===== 融合逐字稿 =====\n\n")
             
             for segment in merged_segments:
                 # 輸出 segment 時間
                 f.write(f"{segment['time']}")
                 
-                # ← 改進：如果有精確秒數或視覺補充，顯示詳情
-                metadata = []
-                if segment.get("precise_times"):
-                    precise_info = ", ".join([
-                        f"{item['word']}@{item['precise_seconds']:.2f}s"
-                        for item in segment["precise_times"][:3]
-                    ])
-                    metadata.append(f"精確: {precise_info}")
                 
-                # ← 新增：顯示視覺補充信息
-                if segment.get("replacements"):
-                    replacement_info = ", ".join([
-                        f"{r['word']}→視覺"
-                        for r in segment["replacements"][:2]
-                    ])
-                    metadata.append(f"補充: {replacement_info}")
+                # # ← 改進：如果有精確秒數或視覺補充，顯示詳情
+                # metadata = []
+                # if segment.get("precise_times"):
+                #     precise_info = ", ".join([
+                #         f"{item['word']}@{item['precise_seconds']:.2f}s"
+                #         for item in segment["precise_times"][:3]
+                #     ])
+                #     metadata.append(f"精確: {precise_info}")
                 
-                if metadata:
-                    f.write(f" [{', '.join(metadata)}]")
+                # # ← 新增：顯示視覺補充信息
+                # if segment.get("replacements"):
+                #     replacement_info = ", ".join([
+                #         f"{r['word']}→視覺"
+                #         for r in segment["replacements"][:2]
+                #     ])
+                #     metadata.append(f"補充: {replacement_info}")
+                
+                # if metadata:
+                #     f.write(f" [{', '.join(metadata)}]")
                 
                 f.write(f"\n{segment['text']}\n\n")
         
