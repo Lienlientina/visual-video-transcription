@@ -4,7 +4,7 @@
 """
 import json
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import warnings
 
 try:
@@ -18,6 +18,9 @@ from utils import seconds_to_timestamp
 
 class Transcriber:
     """語音轉逐字稿類"""
+    
+    # 字幕單行最大字符數（超過自動分割）
+    MAX_SEGMENT_LENGTH = 60
     
     def __init__(self, model_size: str = WHISPER_MODEL, device: str = DEVICE):
         """
@@ -95,8 +98,12 @@ class Transcriber:
             "segments": result_segments
         }
         
+        # ← 新增：在這裡細分過長的 segment（在語言偵測前）
+        result["segments"] = self._split_long_segments(result["segments"])
+        print(f"[Transcriber] 細分過長段落後共 {len(result['segments'])} 個片段")
+        
         # ← 新增：根據實際文本內容修正語言判斷
-        detected_language = self._detect_content_language(result_segments)
+        detected_language = self._detect_content_language(result["segments"])
         if detected_language != info.language:
             print(f"[Transcriber] ⚠️  語言修正: {info.language} → {detected_language}")
             result["language"] = detected_language
@@ -166,35 +173,48 @@ class Transcriber:
             
             print(f"[Transcriber] 開始進行語義修正...")
             
-            corrected_segments = []
+            segments = transcript_json.get("segments", [])
+            if not segments:
+                return transcript_json
             
-            for i, seg in enumerate(transcript_json["segments"]):
-                # 保留原始所有字段
-                corrected_seg = seg.copy()
-                
-                try:
-                    # 只修正 text 字段
-                    lang_label = "中文" if language == "zh" else "英文"
-                    prompt = f"""請修正以下{lang_label}語音轉錄的錯字，修正以下幾種情況：
+            # ← 優化：把所有 segments 串成一段，用分隔符連接
+            segments_text = "\n---\n".join([
+                f"[{i}] {seg['text']}" 
+                for i, seg in enumerate(segments)
+            ])
+            
+            # ← 一次性發給 Gemini（只需 1 個請求，而不是 N 個）
+            lang_label = "中文" if language == "zh" else "英文"
+            prompt = f"""請修正以下{lang_label}語音轉錄的錯字，修正以下幾種情況：
                     1. 同音字錯誤（例如「咋」→「這」、「再」→「在」、"its" -> "it's"）
                     2. 專有名詞誤認（例如「派森」→「Python」）
                     3. 明顯的語法或文法錯誤
                     
                     只輸出修正後的文本，不要包含任何說明。
                     
-                    原文：{seg['text']}
+                    原文：{segments_text}
                     
                     修正後："""
+            
+            response = model.generate_content(prompt)
+            corrected_all = response.text.strip()
+            
+            # ← 把返回的文本按分隔符分割，更新各 segment
+            corrected_lines = corrected_all.split("\n---\n")
+            corrected_segments = []
+            
+            for i, seg in enumerate(segments):
+                corrected_seg = seg.copy()
+                
+                if i < len(corrected_lines):
+                    corrected_text = corrected_lines[i].strip()
                     
-                    response = model.generate_content(prompt)
-                    corrected_text = response.text.strip()
+                    # 提取修正後的文本（去掉編號前綴）
+                    prefix = f"[{i}] "
+                    if corrected_text.startswith(prefix):
+                        corrected_text = corrected_text[len(prefix):]
                     
-                    # 只更新 "text" 字段，其他都不動（time, start, end）
                     corrected_seg["text"] = corrected_text
-                    
-                except Exception as e:
-                    print(f"[Transcriber] ⚠️  segment {i} 修正失敗: {e}，保留原文")
-                    # 失敗就保持原文
                 
                 corrected_segments.append(corrected_seg)
             
@@ -202,10 +222,9 @@ class Transcriber:
             transcript_json["segments"] = corrected_segments
             
             print(f"[Transcriber] 語義修正完成，共 {len(corrected_segments)} 個片段")
-            
+        
         except Exception as e:
-            print(f"[Transcriber] ❌ 語義修正過程出錯: {e}，跳過修正")
-            # 如果整體失敗，直接返回原文
+            print(f"[Transcriber] ⚠️  語義修正失敗: {e}，保留原文")
         
         return transcript_json
     
@@ -233,6 +252,109 @@ class Transcriber:
         print(f"[Transcriber] 逐字稿已保存至: {output_path}")
         
         return output_path
+    
+    def _split_long_segments(self, segments: List[Dict]) -> List[Dict]:
+        """
+        將過長的 segment 細分成多個短 segment
+        
+        Args:
+            segments: 原始 segment 列表
+        
+        Returns:
+            list: 細分後的 segment 列表
+        """
+        split_segments = []
+        
+        for seg in segments:
+            text = seg.get("text", "")
+            start = seg.get("start", 0)
+            end = seg.get("end", 0)
+            
+            # 如果文本長度在限制內，直接加入
+            if len(text) <= self.MAX_SEGMENT_LENGTH:
+                split_segments.append(seg)
+                continue
+            
+            # 需要分割
+            duration = end - start
+            num_parts = (len(text) + self.MAX_SEGMENT_LENGTH - 1) // self.MAX_SEGMENT_LENGTH
+            time_per_part = duration / num_parts
+            
+            # 按標點或字符分割文本
+            parts = self._split_text_by_punctuation(text, num_parts)
+            
+            # 為每一部分創建新 segment
+            for idx, part in enumerate(parts):
+                if not part.strip():
+                    continue
+                
+                part_start = start + idx * time_per_part
+                part_end = start + (idx + 1) * time_per_part
+                
+                new_seg = {
+                    "time": seconds_to_timestamp(part_start),
+                    "text": part.strip(),
+                    "start": part_start,
+                    "end": part_end
+                }
+                split_segments.append(new_seg)
+        
+        return split_segments
+    
+    def _split_text_by_punctuation(self, text: str, num_parts: int) -> List[str]:
+        """
+        按標點符號分割文本
+        
+        Args:
+            text: 要分割的文本
+            num_parts: 目標分割數
+        
+        Returns:
+            list: 分割後的文本列表
+        """
+        if num_parts <= 1:
+            return [text]
+        
+        # 優先按標點分割
+        punctuation_marks = ['。', '，', '、']
+        
+        for mark in punctuation_marks:
+            if mark in text:
+                parts = text.split(mark)
+                
+                # 如果標點分割的部分足夠多
+                if len(parts) >= num_parts:
+                    result = []
+                    items_per_group = max(1, len(parts) // num_parts)
+                    
+                    for group_idx in range(num_parts):
+                        start_idx = group_idx * items_per_group
+                        if group_idx == num_parts - 1:
+                            end_idx = len(parts)
+                        else:
+                            end_idx = (group_idx + 1) * items_per_group
+                        
+                        group_parts = parts[start_idx:end_idx]
+                        combined = mark.join(group_parts)
+                        if combined and not combined.endswith(mark):
+                            combined += mark
+                        if combined:
+                            result.append(combined)
+                    
+                    return result
+        
+        # 按字符均勻分割
+        chars_per_part = max(1, len(text) // num_parts)
+        result = []
+        for i in range(num_parts):
+            if i == num_parts - 1:
+                part = text[i * chars_per_part:]
+            else:
+                part = text[i * chars_per_part:(i + 1) * chars_per_part]
+            if part:
+                result.append(part)
+        
+        return result
     
     def load_transcript(self, json_path: str) -> Dict:
         """

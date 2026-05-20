@@ -130,7 +130,7 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     
     # ========== 步驟 5: 融合 ==========
     print("\n" + "="*70)
-    print("【步驟5】融合：將指示詞替換為視覺描述")
+    print("【步驟5】融合：將指示詞替換為視覺描述 + 生成字幕")
     print("="*70)
     
     try:
@@ -146,7 +146,7 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     
     # ========== 輸出結果 ==========
     print("\n" + "="*70)
-    print("【結果】保存融合逐字稿")
+    print("【結果】保存融合逐字稿 + 字幕")
     print("="*70)
     
     try:
@@ -157,6 +157,7 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print(f"\n✓ 輸出文件：")
         print(f"  - 文本版: outputs/results/{output_base}.txt")
         print(f"  - JSON版: outputs/results/{output_base}_fusion.json")
+        print(f"  - 字幕版: outputs/results/{output_base}.srt")
     except Exception as e:
         print(f"✗ 保存失敗: {e}")
         return

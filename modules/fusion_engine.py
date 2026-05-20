@@ -7,6 +7,7 @@ from typing import Dict, List
 from pathlib import Path
 
 from config import RESULTS_DIR
+from modules.subtitle_converter import SubtitleConverter
 
 
 class FusionEngine:
@@ -132,6 +133,8 @@ class FusionEngine:
                 "original_text": original_text,
                 "replacements": replacements,
                 "modified": len(replacements) > 0,
+                "start": segment.get("start", 0),  # ← 新增：保留原始時間段
+                "end": segment.get("end", 0),      # ← 新增：保留原始時間段
                 "precise_times": [  # ← 新增：記錄此段落中所有指示詞的精確秒數
                     {
                         "word": d["word"],
@@ -151,6 +154,29 @@ class FusionEngine:
         print(f"\n[FusionEngine] 融合完成:")
         print(f"  - 修改段落: {result['modified_segments']}/{result['total_segments']}")
         print(f"  - 總替換數: {result['total_replacements']}")
+        
+        # ← 新增：生成字幕
+        try:
+            subtitle_converter = SubtitleConverter()
+            
+            # 為 result 添加 fused_text 字段（從 text 複製）
+            for seg in result["segments"]:
+                if "fused_text" not in seg:
+                    seg["fused_text"] = seg["text"]
+            
+            srt_content = subtitle_converter.fused_json_to_srt(result)
+            
+            if srt_content:
+                # 保存 SRT 檔案
+                video_stem = Path(transcript_json["filename"]).stem
+                srt_path = RESULTS_DIR / f"{video_stem}.srt"
+                subtitle_converter.save_srt(srt_content, srt_path)
+                print(f"[FusionEngine] 字幕已生成: {srt_path}")
+            else:
+                print("[FusionEngine] ⚠️  字幕內容為空，跳過生成")
+                
+        except Exception as e:
+            print(f"[FusionEngine] ⚠️  字幕生成失敗: {e}")
         
         return result
     

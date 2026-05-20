@@ -33,7 +33,7 @@
 
 | 模塊 | 功能 | 狀態 |
 |------|------|------|
-| **Transcriber** | 語音轉文字 + 語言自動偵測 + 時間戳 `[H:MM:SS]` | ✅ 完成 |
+| **Transcriber** | 語音轉文字 + 語言自動偵測 + 時間戳 + 自動分割過長句段 | ✅ 完成 |
 | **DeicticDetector** | 多語言指示詞檢測 + 三層智能過濾 | ✅ 完成 |
 | **FrameExtractor** | 精確秒數截幀（±0.1秒） | ✅ 完成 |
 | **VisionAnalyzer** | Gemini 3.1 Flash Lite 視覺分析 | ✅ 完成 |
@@ -130,25 +130,43 @@ outputs/
 ├── frames/
 │   └── <video_name>_MM_SS_precise_X_XX.jpg  # 精確秒數截幀
 └── results/
-    ├── <video_name>.txt           # 融合後的可讀逐字稿
-    └── <video_name>_fusion.json    # 融合詳細數據
+    ├── <video_name>.txt            # 融合後的可讀逐字稿
+    ├── <video_name>_fusion.json    # 融合詳細數據
+    └── <video_name>.srt            # SRT caption file (turn on/off in player)
 ```
+### 🎞️ 使用字幕
 
+生成的 `.srt` 檔案可與影片搭配：
+
+**VLC 播放器 (推薦)**
+1. 在 VLC 中打開影片
+2. 字幕 → 添加字幕檔案 → 選擇 `<video_name>.srt`
+3. 按 `V` 快速開/關字幕
+
+**Windows 媒體播放器**
+1. 將 `.srt` 檔案放在與影片相同的目錄
+2. 檔名須與影片相同，如 `demo.mp4` 對應 `demo.srt`
+3. 打開影片時自動載入字幕
+
+**其他支援 SRT 的播放器**
+- YouTube（上傳為內嵌字幕）
+- OBS（直播用）
+- Shotcut、DaVinci Resolve（剪輯用）
 ---
 
 ## 📁 項目結構
 
 ```
 visual-video-transcription/
-├── README.md                      # 本檔案
-├── requirements.txt               # Python dependency
-├── config.py                      # 中心化配置（模型、詞表、路徑）
-├── .env.example                   # API Key 模板
-├── .gitignore                     # 安全排除 .env 和輸出文件
-├── utils.py                       # 工具函數
+├── README.md
+├── requirements.txt
+├── config.py                      # model, 詞表, dir
+├── .env.example
+├── .gitignore
+├── utils.py                       # tool functions
 │   ├── seconds_to_timestamp()     # 轉換秒數為 [H:MM:SS] 格式
 │   ├── timestamp_to_seconds()     # 轉換時間戳為秒數
-│   ├── find_deictic_words()       # 多語言指示詞尋找
+│   ├── find_deictic_words()       # 多語言 deictic words 尋找
 │   ├── check_skip_pattern()       # 第一層：語法過濾
 │   ├── ask_vision_decision()      # 第二層：AI 輕量判斷
 │   └── decide_vision_needed()     # 三層法 main
@@ -162,8 +180,10 @@ visual-video-transcription/
 │   │   └── FrameExtractor class: extract_frames_from_deictic()
 │   ├── vision_analyzer.py         # Gemini 視覺分析
 │   │   └── VisionAnalyzer class: analyze_image(), analyze_frames_batch()
-│   └── fusion_engine.py           # 補充式融合 + 句子合併
-│       └── FusionEngine class: fuse()
+│   ├── fusion_engine.py           # 補充式融合 + 句子合併
+│   │   └── FusionEngine class: fuse()
+│   └── subtitle_converter.py      # Generate SRT caption
+│       └── SubtitleConverter class: fused_json_to_srt()
 │
 ├── tests/
 │   ├── README_tests.md            # 測試使用說明
@@ -172,7 +192,8 @@ visual-video-transcription/
 │   ├── test_deictic_detector.py   # 指示詞檢測測試
 │   ├── test_frame_extractor.py    # 截幀測試
 │   ├── test_vision_analyzer.py    # 視覺分析測試
-│   └── test_fusion_engine.py      # 融合測試
+│   ├── test_fusion_engine.py      # 融合測試
+│   └── test_subtitle_converter.py # 字幕轉換測試
 │
 ├── outputs/                       # （不上傳 Git）
 │   ├── transcripts/               # 原始逐字稿
@@ -325,13 +346,14 @@ Response: YES → 需要視覺分析
 - [x] 影片幀提取 (FFmpeg)
 - [x] Gemini 3.1 Flash Lite 視覺分析集成
 - [x] 句子合併優化（保留原文及可讀性）
+- [x] 影片加字幕功能（SRT 軟字幕）
 - [x] Pipeline Test
 - [x] Unit Test
 
 ### 🚧 進行中 / 計劃中
 
-- [ ] 影片加字幕功能
-  - 將融合逐字稿渲染為 SRT/VTT 字幕
+- [x] 影片加字幕功能（軟字幕）
+  - 將融合逐字稿渲染為 SRT 字幕
   - 時間軸精確同步
 
 - [ ] 語義搜索引擎
@@ -441,18 +463,21 @@ result = fusion.fuse(transcript, analyses)
 ---
 ## Version History
 
+### v1.1.0 (2026-05-20)
+  - ✅ 修復 Gemini API Rate Limit 問題（批量語義修正：32 → 1 API call）
+  - ✅ 自動分割過長字幕 (Transriber)
+  - ✅ SRT 字幕
+
 ### v1.0.0 (2026-05-15)
-  - ✅ 完整 5 module 系統
   - ✅ 多語言支持（中英文自動偵測）
   - ✅ 三層智能過濾系統（規則 + AI + 視覺）
   - ✅ 精確秒數定位（±0.1秒）
   - ✅ Gemini 3.1 Flash Lite 集成
-  - ✅ 安全 .env 配置
   - ✅ 句子合併（可讀性優化）
   - ✅ 完整測試文檔和使用指南
 
 ### v0.1.0 (2026-05-14)
-  - ✅ 5 個核心模塊完成
+  - ✅ 5 個核心 module 完成
   - ✅ 完整管線集成
   - ✅ 視覺提示詞優化
   - 🚧 LLM 融合逐字稿
@@ -468,6 +493,6 @@ result = fusion.fuse(transcript, analyses)
 
 ---
 
-**最後更新**: 2026-05-15  
-**版本**: v1.0.0  
+**最後更新**: 2026-05-20  
+**版本**: v1.1.0  
 **狀態**: 功能完整，已驗證，持續優化

@@ -8,6 +8,7 @@ ENV/
 
 # Demo & Output folders (large files)
 demo_video/
+demo/
 outputs/
 
 # Python
