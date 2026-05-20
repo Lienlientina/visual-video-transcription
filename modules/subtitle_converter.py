@@ -63,7 +63,7 @@ class SubtitleConverter:
             if not subtitle_text.strip():
                 continue
             
-            # 組合 SRT 格式（segments 已經在 transcriber 階段被細分，無需再分割）
+            # 組合 SRT 格式
             index = len(srt_lines) // 4 + 1  # 每個字幕塊占 4 行（序號、時間、文本、空行）
             srt_lines.append(str(index))
             srt_lines.append(f"{start_time} --> {end_time}")
