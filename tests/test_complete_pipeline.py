@@ -13,6 +13,7 @@ from modules.transcriber import Transcriber
 from modules.deictic_detector import DeicticDetector
 from modules.frame_extractor import FrameExtractor
 from modules.vision_analyzer import VisionAnalyzer
+from modules.recall_detector import RecallDetector
 from modules.fusion_engine import FusionEngine
 
 
@@ -45,8 +46,10 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print("⏳ 正在轉錄...")
         try:
             transcriber = Transcriber()
-            # ← 改進：不硬編碼語言，讓 Whisper 自動偵測
             transcript_json = transcriber.transcribe(str(video_path))
+
+            transcriber.save_transcript(transcript_json, output_name=video_path.stem)
+            print(f"✓ 逐字稿已保存至: outputs/transcripts/{video_path.stem}.json")
         except Exception as e:
             print(f"✗ 轉錄失敗: {e}")
             return
@@ -90,57 +93,87 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         frames_result = extractor.extract_frames_from_deictic(str(video_path), deictic_data)
         
         if frames_result["success_frames"] == 0:
-            print("\n⚠️ 截幀失敗，流程終止")
-            return
-        
-        print(f"✓ 成功截取 {frames_result['success_frames']} 幀")
+            print("\n⚠️ 無需視覺分析的指示詞")
+            frames_result = {"success_frames": 0, "frames": []}  # 創建空結果
+        else:
+            print(f"✓ 成功截取 {frames_result['success_frames']} 幀")
     except Exception as e:
         print(f"✗ 截幀失敗: {e}")
         return
     
     # ========== 步驟 4: 視覺分析 ==========
     print("\n" + "="*70)
-    print("【步驟4】用 LLaVA/Qwen 分析截幀視覺內容")
+    print("【步驟4】用 Gemini 分析截幀視覺內容")
     print("="*70)
-    print("⏳ 正在分析（可能需要1-2分鐘）...\n")
+    
+    if frames_result["success_frames"] == 0:
+        print("⊘ 無需進行視覺分析（所有指示詞都是概念性引用）")
+        vision_data = {"success": 0, "failed": 0, "analyses": []}
+    else:
+        print("⏳ 正在分析（可能需要1-2分鐘）...\n")
+        
+        try:
+            analyzer = VisionAnalyzer()
+            language = transcript_json.get("language", "en")
+            vision_data = analyzer.analyze_frames_batch(frames_result, language=language)
+            
+            success_count = vision_data["success"]
+            if success_count == 0:
+                print("\n✗ 視覺分析全部失敗")
+                print("\n失敗詳情：")
+                for idx, analysis in enumerate(vision_data["analyses"][:3], 1):
+                    print(f"  [{idx}] {Path(analysis['image_path']).name}")
+                    print(f"      錯誤: {analysis.get('error', '未知錯誤')}")
+                print("\n⚠️ 流程終止")
+                return
+            
+            print(f"\n✓ 成功分析 {success_count} 張圖片")
+            
+            if vision_data["failed"] > 0:
+                print(f"⚠️ 有 {vision_data['failed']} 張圖片分析失敗")
+        except Exception as e:
+            print(f"✗ 視覺分析失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+    
+    # ========== 步驟 4b: 回想內容識別 ==========
+    print("\n" + "="*70)
+    print("【步驟4b】回想內容識別：偵測說話者對過去內容的引用")
+    print("="*70)
+    
+    language = transcript_json.get("language", "en")
+    recall_data = {"total_recalls": 0, "recalls": []}
     
     try:
-        analyzer = VisionAnalyzer()
-        language = transcript_json.get("language", "en")
-        vision_data = analyzer.analyze_frames_batch(frames_result, language=language)
+        recall_detector = RecallDetector()
+        recall_data = recall_detector.detect_recalls(
+            transcript_json,
+            language=language,
+            similarity_threshold=0.7
+        )
         
-        success_count = vision_data["success"]
-        if success_count == 0:
-            print("\n✗ 視覺分析全部失敗")
-            print("\n失敗詳情：")
-            for idx, analysis in enumerate(vision_data["analyses"][:3], 1):
-                print(f"  [{idx}] {Path(analysis['image_path']).name}")
-                print(f"      錯誤: {analysis.get('error', '未知錯誤')}")
-            print("\n⚠️ 流程終止")
-            return
-        
-        print(f"\n✓ 成功分析 {success_count} 張圖片")
-        
-        if vision_data["failed"] > 0:
-            print(f"⚠️ 有 {vision_data['failed']} 張圖片分析失敗")
+        print(f"\n✓ 回想內容識別完成")
+        print(f"  - 總共發現: {recall_data['total_recalls']} 個回想")
     except Exception as e:
-        print(f"✗ 視覺分析失敗: {e}")
-        import traceback
-        traceback.print_exc()
-        return
+        print(f"⚠ 回想內容識別失敗（非關鍵）: {e}")
+        print(f"  - 繼續使用融合...")
+        recall_data = {"total_recalls": 0, "recalls": []}
     
     # ========== 步驟 5: 融合 ==========
     print("\n" + "="*70)
-    print("【步驟5】融合：將指示詞替換為視覺描述 + 生成字幕")
+    print("【步驟5】融合：將指示詞替換為視覺描述 + 標注回想內容 + 生成字幕")
     print("="*70)
     
     try:
         engine = FusionEngine()
-        fused_data = engine.fuse(transcript_json, deictic_data, vision_data)
+        fused_data = engine.fuse(transcript_json, deictic_data, vision_data, recall_data)
         
         print(f"\n✓ 融合完成")
         print(f"  - 修改段落: {fused_data['modified_segments']}/{fused_data['total_segments']}")
         print(f"  - 總替換數: {fused_data['total_replacements']}")
+        if recall_data.get("total_recalls", 0) > 0:
+            print(f"  - 回想標注: {fused_data.get('total_recalls', 0)} 個")
     except Exception as e:
         print(f"✗ 融合失敗: {e}")
         return
@@ -152,7 +185,7 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     
     try:
         output_base = video_path.stem
-        engine.save_fused_transcript(fused_data, output_base)
+        engine.save_fused_transcript(fused_data, transcript_json, recall_data, output_base)
         engine.export_as_json(fused_data, f"{output_base}_fusion")
         
         print(f"\n✓ 輸出文件：")

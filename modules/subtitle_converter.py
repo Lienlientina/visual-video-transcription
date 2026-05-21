@@ -19,31 +19,35 @@ class SubtitleConverter:
         Args:
             fused_json (dict): 融合逐字稿 JSON
                 {
-                    "segments": [
+                    "segments": [...],
+                    "recalls": [
                         {
-                            "time": "[0:00:05]",
-                            "fused_text": "把這個[視覺補充: ...]公式代入",
-                            "start": 5.0,
-                            "end": 8.5
+                            "segment_idx": 5,
+                            "recalled_time": "[0:01:40]",
+                            "recalled_text": "...",
+                            "recall_type": "direct|contrast",
+                            "similarity_score": 0.82
                         }
                     ]
                 }
         
         Returns:
             str: SRT 格式的字幕文本
-                1
-                00:00:05,000 --> 00:00:08,500
-                把這個[視覺補充: ...]公式代入
-                
-                2
-                00:00:08,500 --> 00:00:12,000
-                ...
         """
         if not fused_json.get("segments"):
             print("[SubtitleConverter] ⚠️  沒有 segments，無法生成字幕")
             return ""
         
         segments = fused_json["segments"]
+        
+        # ← 新增：建立 recall 映射
+        recall_map = {}
+        for recall in fused_json.get("recalls", []):
+            segment_idx = recall.get("segment_idx")
+            if segment_idx not in recall_map:
+                recall_map[segment_idx] = []
+            recall_map[segment_idx].append(recall)
+        
         srt_lines = []
         
         for i, seg in enumerate(segments):
@@ -62,6 +66,20 @@ class SubtitleConverter:
             # 跳過空字幕
             if not subtitle_text.strip():
                 continue
+            
+            # ← 新增：添加 recall 標注（如果有）
+            if i in recall_map:
+                for recall in recall_map[i]:
+                    recall_time = recall.get("recalled_time", "")
+                    recall_text = recall.get("recalled_text", "")[:30]  # 前 30 字
+                    recall_type = recall.get("recall_type", "direct")
+                    
+                    if recall_type == "contrast":
+                        annotation = f"[↔ {recall_time} {recall_text}...]"
+                    else:
+                        annotation = f"[回想 {recall_time} {recall_text}...]"
+                    
+                    subtitle_text = f"{annotation}\n{subtitle_text}"
             
             # 組合 SRT 格式
             index = len(srt_lines) // 4 + 1  # 每個字幕塊占 4 行（序號、時間、文本、空行）

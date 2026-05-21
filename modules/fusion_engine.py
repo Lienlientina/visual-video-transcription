@@ -15,67 +15,43 @@ class FusionEngine:
     
     def __init__(self):
         """初始化融合引擎"""
-        print("[FusionEngine] 初始化完成（方案A：簡單替換）")
+        print("[FusionEngine] 初始化完成")
     
-    def fuse(self, transcript_json: Dict, deictic_data: Dict, vision_data: Dict) -> Dict:
+    def fuse(self, transcript_json: Dict, deictic_data: Dict, vision_data: Dict, 
+             recall_data: Dict = None) -> Dict:
         """
-        融合邏輯：將指示詞替換為視覺描述
+        融合邏輯：將指示詞替換為視覺描述 + 將回想詞標注到過去內容
         
         Args:
             transcript_json (dict): 原始逐字稿
-                {
-                    "segments": [
-                        {"time": "[0:00:05]", "text": "把這個公式代入..."},
-                        ...
-                    ]
-                }
-            
             deictic_data (dict): 指示詞數據
-                {
-                    "deictic_words": [
-                        {
-                            "word": "這個",
-                            "time": "[0:00:05]",
-                            "segment_text": "把這個公式代入",
-                            "position_in_segment": 2,
-                            "context": "把這個公式代入"
-                        },
-                        ...
-                    ]
-                }
-            
             vision_data (dict): 視覺分析數據
+            recall_data (dict): 回想內容數據（新增）
                 {
-                    "analyses": [
+                    "total_recalls": 2,
+                    "recalls": [
                         {
-                            "image_path": "outputs/frames/0_00_05.jpg",
-                            "description": "白板上有微分公式...",
-                            "success": True
-                        },
-                        ...
+                            "segment_idx": 15,
+                            "recall_word": "as I mentioned",
+                            "recall_type": "direct" 或 "contrast",
+                            "recalled_segment_idx": 3,
+                            "recalled_text": "...",
+                            "recalled_time": "[0:00:18]",
+                            "similarity_score": 0.82,
+                            "contrast_marker": "↔" (optional)
+                        }
                     ]
                 }
         
         Returns:
             dict: 融合後的逐字稿
-                {
-                    "segments": [
-                        {
-                            "time": "[0:00:05]",
-                            "text": "把〔畫面：白板上有微分公式...〕代入...",
-                            "original_text": "把這個公式代入...",
-                            "replacements": [
-                                {"word": "這個", "description": "白板上有微分公式..."}
-                            ]
-                        },
-                        ...
-                    ]
-                }
         """
         print(f"\n[FusionEngine] 開始融合...")
         print(f"  - 逐字稿段落: {len(transcript_json.get('segments', []))}")
         print(f"  - 指示詞數: {len(deictic_data.get('deictic_words', []))}")
         print(f"  - 視覺描述: {len(vision_data.get('analyses', []))}")
+        if recall_data:
+            print(f"  - 回想內容: {len(recall_data.get('recalls', []))}")
         
         # 建立時間戳 → 視覺描述的映射（直接用 timestamp，不依賴檔名）
         vision_map = {}
@@ -148,8 +124,36 @@ class FusionEngine:
             "segments": fused_segments,
             "total_segments": len(fused_segments),
             "modified_segments": sum(1 for s in fused_segments if s["modified"]),
-            "total_replacements": sum(len(s["replacements"]) for s in fused_segments)
+            "total_replacements": sum(len(s["replacements"]) for s in fused_segments),
+            "recalls": []  # ← 新增：保存 recall 數據
         }
+        
+        # ← 新增：融合回想標注
+        if recall_data:
+            for recall in recall_data.get("recalls", []):
+                segment_idx = recall["segment_idx"]
+                recall_word = recall["recall_word"]
+                recalled_time = recall["recalled_time"]
+                recalled_text = recall["recalled_text"]
+                recall_type = recall.get("recall_type", "direct")
+                similarity = recall.get("similarity_score", 0.0)
+                
+                if segment_idx < len(fused_segments):
+                    segment = fused_segments[segment_idx]
+                    segment["modified"] = True
+                    
+                    # 保存 recall 信息到 result
+                    result["recalls"].append({
+                        "segment_idx": segment_idx,
+                        "recall_word": recall_word,
+                        "recalled_time": recalled_time,
+                        "recalled_text": recalled_text,
+                        "recall_type": recall_type,
+                        "similarity_score": similarity
+                    })
+            
+            result["total_recalls"] = len(recall_data.get("recalls", []))
+            print(f"  - 回想標注: {result['total_recalls']} 個")
         
         print(f"\n[FusionEngine] 融合完成:")
         print(f"  - 修改段落: {result['modified_segments']}/{result['total_segments']}")
@@ -180,12 +184,15 @@ class FusionEngine:
         
         return result
     
-    def save_fused_transcript(self, fused_data: Dict, output_name: str = None) -> Path:
+    def save_fused_transcript(self, fused_data: Dict, transcript_json: Dict, 
+                             recall_data: Dict = None, output_name: str = None) -> Path:
         """
         保存融合後的逐字稿
         
         Args:
-            fused_data (dict): 融合結果
+            fused_data (dict): 融合結果（包含 recalls）
+            transcript_json (dict): 原始逐字稿（含語言和文件名信息）
+            recall_data (dict): 回想內容數據（向後兼容，可選）
             output_name (str): 輸出檔名（不含副檔名）
         
         Returns:
@@ -199,35 +206,54 @@ class FusionEngine:
         # ← 新增：合併短句子成完整段落
         merged_segments = self._merge_short_segments(fused_data["segments"])
         
+        # ← 新增：建立 recall 映射 (segment_idx → recall_list)
+        recall_map = {}
+        # 優先使用 fused_data 中的 recalls（新方式）
+        recalls = fused_data.get("recalls", []) or recall_data.get("recalls", []) if recall_data else []
+        for recall in recalls:
+            segment_idx = recall.get("segment_idx")
+            if segment_idx not in recall_map:
+                recall_map[segment_idx] = []
+            recall_map[segment_idx].append(recall)
+        
         # 輸出為可讀的文本格式
         with open(output_path, 'w', encoding='utf-8') as f:
             # f.write("===== 融合逐字稿 =====\n\n")
             
-            for segment in merged_segments:
+            # ← 新增：語言過濾 - 只輸出符合目標語言的 segments
+            target_language = transcript_json.get("language", "en")
+            is_target_english = target_language.startswith("en")
+            
+            for segment_idx, segment in enumerate(merged_segments):
+                text = segment.get('text', '').strip()
+                
+                # ← 語言過濾：如果目標是英文，移除純中文 segments
+                if is_target_english:
+                    # 檢查是否包含大量中文字符
+                    chinese_count = sum(1 for c in text if ord(c) > 0x4E00 and ord(c) < 0x9FFF)
+                    english_count = sum(1 for c in text if c.isalpha())
+                    
+                    # 如果中文比例 > 50%，跳過此 segment
+                    if chinese_count > english_count:
+                        continue
+                
+                # ← 新增：輸出 recall 標注（如果有）
+                if segment_idx in recall_map:
+                    for recall in recall_map[segment_idx]:
+                        recall_time = recall.get("recalled_time", "")
+                        recall_text = recall.get("recalled_text", "")[:50]  # 前 50 字
+                        similarity = recall.get("similarity_score", 0)
+                        recall_type = recall.get("recall_type", "direct")
+                        
+                        if recall_type == "contrast":
+                            marker = f"[↑ ↔ {recall_time} '{recall_text}...' (相似度:{similarity:.2f})]"
+                        else:
+                            marker = f"[↑ {recall_time} '{recall_text}...' (相似度:{similarity:.2f})]"
+                        
+                        f.write(f"{marker}\n")
+                
                 # 輸出 segment 時間
                 f.write(f"{segment['time']}")
-                
-                
-                # # ← 改進：如果有精確秒數或視覺補充，顯示詳情
-                # metadata = []
-                # if segment.get("precise_times"):
-                #     precise_info = ", ".join([
-                #         f"{item['word']}@{item['precise_seconds']:.2f}s"
-                #         for item in segment["precise_times"][:3]
-                #     ])
-                #     metadata.append(f"精確: {precise_info}")
-                
-                # # ← 新增：顯示視覺補充信息
-                # if segment.get("replacements"):
-                #     replacement_info = ", ".join([
-                #         f"{r['word']}→視覺"
-                #         for r in segment["replacements"][:2]
-                #     ])
-                #     metadata.append(f"補充: {replacement_info}")
-                
-                # if metadata:
-                #     f.write(f" [{', '.join(metadata)}]")
-                
                 f.write(f"\n{segment['text']}\n\n")
         
         print(f"[FusionEngine] 融合逐字稿已保存至: {output_path}")
@@ -291,14 +317,50 @@ class FusionEngine:
             Path: 輸出檔案路徑
         """
         import json
+        import numpy as np
+        
+        class NumpyEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                return super().default(obj)
         
         if output_name is None:
             output_name = "fused_transcript"
         
+        # ← 新增：為每個 segment 添加格式化的 recalls_text
+        recall_map = {}
+        for recall in fused_data.get("recalls", []):
+            segment_idx = recall.get("segment_idx")
+            if segment_idx not in recall_map:
+                recall_map[segment_idx] = []
+            recall_map[segment_idx].append(recall)
+        
+        # 添加格式化 recall 文本到每個 segment
+        for idx, segment in enumerate(fused_data.get("segments", [])):
+            if idx in recall_map:
+                recalls_text = []
+                for recall in recall_map[idx]:
+                    recall_time = recall.get("recalled_time", "")
+                    recall_text = recall.get("recalled_text", "")[:50]
+                    similarity = recall.get("similarity_score", 0)
+                    recall_type = recall.get("recall_type", "direct")
+                    
+                    if recall_type == "contrast":
+                        formatted = f"[↔ {recall_time} {recall_text}... (相似:{similarity:.2f})]"
+                    else:
+                        formatted = f"[{recall_time} {recall_text}... (相似:{similarity:.2f})]"
+                    
+                    recalls_text.append(formatted)
+                
+                segment["recalls_text"] = " ".join(recalls_text)
+        
         output_path = RESULTS_DIR / f"{output_name}.json"
         
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(fused_data, f, ensure_ascii=False, indent=2)
+            json.dump(fused_data, f, ensure_ascii=False, indent=2, cls=NumpyEncoder)
         
         print(f"[FusionEngine] 融合數據已保存至: {output_path}")
         

@@ -33,6 +33,9 @@ def check_skip_pattern(sentence, deictic_word, language="zh"):
     return False
 
 
+# ← 新增：緩存指示詞判斷結果，避免重複調用 API
+_VISION_DECISION_CACHE = {}
+
 def ask_vision_decision(deictic_word, context_before, context_after, language="zh"):
     """
     第二層：輕量 AI 判斷
@@ -47,6 +50,11 @@ def ask_vision_decision(deictic_word, context_before, context_after, language="z
     Returns:
         bool: True 需要視覺，False 不需要
     """
+    # ← 新增：檢查緩存
+    cache_key = (deictic_word, language)
+    if cache_key in _VISION_DECISION_CACHE:
+        return _VISION_DECISION_CACHE[cache_key]
+    
     try:
         import google.generativeai as genai
         
@@ -73,12 +81,18 @@ def ask_vision_decision(deictic_word, context_before, context_after, language="z
         
         # 檢查回答
         if language == "zh":
-            return "畫面" in answer
+            result = "畫面" in answer
         else:
-            return "visual" in answer
+            result = "visual" in answer
+        
+        # ← 新增：儲存到緩存
+        _VISION_DECISION_CACHE[cache_key] = result
+        return result
     
     except Exception as e:
         print(f"[Warning] 判斷指示詞『{deictic_word}』失敗: {e}")
+        # ← 新增：失敗時也緩存結果（預設 False），避免重複出錯
+        _VISION_DECISION_CACHE[cache_key] = False
         return False
 
 

@@ -77,7 +77,8 @@ class Transcriber:
             str(video_path),
             language=language,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=250)
+            vad_parameters=dict(
+                min_silence_duration_ms=250, threshold=0.5)
         )
         
         # 將 segments 轉換為列表並格式化
@@ -92,26 +93,27 @@ class Transcriber:
                 "end": segment.end
             })
         
+        # ← 簡化：多層次語言檢測策略（只返回 en 或 zh）
+        detected_lang = info.language if info else None
+        print(f"[Transcriber] Whisper 检测语言: {detected_lang}")
+        
+        content_lang = self._detect_content_language(result_segments)
+        print(f"[Transcriber] 内容分析语言: {content_lang}")
+        
+        result_lang = content_lang
+        
+        print(f"[Transcriber] 最終語言: {result_lang}")
+        
         result = {
             "filename": video_path.name,
-            "language": info.language,
+            "language": result_lang,
             "segments": result_segments
         }
         
-        # ← 新增：按句子邊界細分過長 segment（方案2）
-        result["segments"] = self._split_segments_by_sentences(result["segments"])
-        print(f"[Transcriber] 按句子細分後共 {len(result['segments'])} 個片段")
-        
-        # ← 新增：根據實際文本內容修正語言判斷
-        detected_language = self._detect_content_language(result["segments"])
-        if detected_language != info.language:
-            print(f"[Transcriber] ⚠️  語言修正: {info.language} → {detected_language}")
-            result["language"] = detected_language
-        
-        # ← 新增：進行語義修正（修正錯字）
+        # 進行語義修正（修正錯字）
         result = self._correct_transcript(result, result["language"])
         
-        print(f"[Transcriber] 轉錄完成，共 {len(result_segments)} 個片段，語言: {result['language']}")
+        print(f"[Transcriber] 轉錄完成，共 {len(result['segments'])} 個片段，語言: {result['language']}")
         
         return result
     
@@ -128,26 +130,33 @@ class Transcriber:
         # 合併所有文本
         all_text = " ".join([seg["text"] for seg in segments])
         
-        # 統計中文字符（CJK 統一表意文字）
+        # 統計各類字符
+        # CJK 統一表意文字（中文）
         chinese_count = sum(1 for c in all_text if '\u4e00' <= c <= '\u9fff')
         
-        # 統計英文字母
-        english_count = sum(1 for c in all_text if c.isalpha() and ord(c) < 128)
+        # 英文字母（a-z, A-Z）
+        english_letter_count = sum(1 for c in all_text if c.isalpha() and ord(c) < 128)
         
-        # 判斷主要語言（閾值：英文占 > 60% 則判為英文）
-        total_chars = chinese_count + english_count
-        if total_chars == 0:
-            return "en"  # 預設英文（通常是沒有字符的情況）
+        print(f"[Transcriber] 字符統計: 中文={chinese_count}, 英文={english_letter_count}")
         
-        english_ratio = english_count / total_chars
+        # 計算英文比例
+        meaningful_chars = chinese_count + english_letter_count
         
-        print(f"[Transcriber] 語言分析: 中文 {chinese_count}, 英文 {english_count}, 英文比例 {english_ratio:.1%}")
+        if meaningful_chars == 0:
+            print(f"[Transcriber] 無意義字符，返回默認語言: en")
+            return "en"
         
-        if english_ratio > 0.6:
+        english_ratio = english_letter_count / meaningful_chars
+        
+        # 判斷主要語言（閾值：英文占 > 50% 則判為英文；反之為中文）
+        if english_ratio > 0.5:
+            print(f"[Transcriber] 判定為: 英文")
             return "en"
         else:
+            print(f"[Transcriber] 判定為: 中文")
             return "zh"
     
+
     def _correct_transcript(self, transcript_json: Dict, language: str) -> Dict:
         """
         使用 Gemini 進行語義修正（修正錯字、同音字等）
@@ -171,11 +180,14 @@ class Transcriber:
             genai.configure(api_key=GEMINI_API_KEY)
             model = genai.GenerativeModel("gemini-3.1-flash-lite")
             
-            print(f"[Transcriber] 開始進行語義修正...")
-            
             segments = transcript_json.get("segments", [])
             if not segments:
                 return transcript_json
+            
+            # 判斷是中文還是英文
+            is_chinese = language.startswith('zh')
+            
+            print(f"[Transcriber] 開始進行語義修正（語言: {language}）...")
             
             # ← 優化：把所有 segments 串成一段，用分隔符連接
             segments_text = "\n---\n".join([
@@ -184,9 +196,9 @@ class Transcriber:
             ])
             
             # ← 一次性發給 Gemini（只需 1 個請求，而不是 N 個）
-            lang_label = "中文" if language == "zh" else "英文"
-            prompt = f"""請修正以下{lang_label}語音轉錄的錯字，修正以下幾種情況：
-                    1. 同音字錯誤（例如「咋」→「這」、「再」→「在」、"its" -> "it's"）
+            if is_chinese:
+                prompt = f"""請修正以下繁體中文語音轉錄的錯字，修正以下幾種情況：
+                    1. 同音字錯誤（例如「咋」→「這」、「再」→「在」）
                     2. 專有名詞誤認（例如「派森」→「Python」）
                     3. 明顯的語法或文法錯誤
                     
@@ -195,6 +207,17 @@ class Transcriber:
                     原文：{segments_text}
                     
                     修正後："""
+            else:
+                prompt = f"""Please correct the following English speech transcription errors. Fix:
+                    1. Homophone errors (e.g., "its" → "it's", "there" → "their")
+                    2. Proper noun misrecognition (e.g., "centre" → "center" if context suggests US English)
+                    3. Obvious grammar or spelling errors
+                    
+                    Only output the corrected text, no explanations.
+                    
+                    Original text: {segments_text}
+                    
+                    Corrected text:"""
             
             response = model.generate_content(prompt)
             corrected_all = response.text.strip()
@@ -228,6 +251,7 @@ class Transcriber:
         
         return transcript_json
     
+
     def save_transcript(self, transcript: Dict, output_name: str = None) -> Path:
         """
         將逐字稿保存為 JSON
@@ -252,100 +276,6 @@ class Transcriber:
         print(f"[Transcriber] 逐字稿已保存至: {output_path}")
         
         return output_path
-    
-    def _split_segments_by_sentences(self, segments: List[Dict]) -> List[Dict]:
-        """
-        按英文句子邊界細分過長 segment（使用 NLTK 本地句子分割）
-        
-        Args:
-            segments: 原始 segment 列表
-        
-        Returns:
-            list: 細分後的 segment 列表
-        """
-        try:
-            from nltk.tokenize import sent_tokenize
-            import nltk
-            nltk.download('punkt_tab')
-            # 確保 punkt 數據已下載
-            try:
-                nltk.data.find('tokenizers/punkt')
-            except LookupError:
-                nltk.download('punkt', quiet=True)
-        except ImportError:
-            print("[Transcriber] ⚠️  NLTK 未安裝，跳過句子分割")
-            return segments
-        
-        split_segments = []
-        
-        for seg in segments:
-            text = seg.get("text", "")
-            start = seg.get("start", 0)
-            end = seg.get("end", 0)
-            
-            # 如果文本長度在限制內，直接加入
-            if len(text) <= self.MAX_SEGMENT_LENGTH:
-                split_segments.append(seg)
-                continue
-            
-            # 用 NLTK 分割句子（即使沒有完整標點也能工作）
-            sentences = sent_tokenize(text)
-            
-            if len(sentences) <= 1:
-                # 無法分割，直接加入
-                split_segments.append(seg)
-                continue
-            
-            # 為每個句子計算時間並創建 segment
-            duration = end - start
-            total_chars = len(text)
-            char_pos = 0
-            
-            for sentence in sentences:
-                if not sentence.strip():
-                    continue
-                
-                sent_start, sent_end = self._estimate_time_for_sentence(
-                    sentence, char_pos, total_chars, start, end
-                )
-                
-                new_seg = {
-                    "time": seconds_to_timestamp(sent_start),
-                    "text": sentence.strip(),
-                    "start": sent_start,
-                    "end": sent_end
-                }
-                split_segments.append(new_seg)
-                char_pos += len(sentence)
-        
-        return split_segments
-    
-    def _estimate_time_for_sentence(self, sentence: str, char_pos: int, total_chars: int, 
-                                     seg_start: float, seg_end: float) -> Tuple[float, float]:
-        """
-        根據字符位置估算句子的時間區間
-        
-        Args:
-            sentence: 句子文本
-            char_pos: 該句子在整個 segment 中的字符起始位置
-            total_chars: segment 的總字符數
-            seg_start: segment 的開始時間（秒）
-            seg_end: segment 的結束時間（秒）
-        
-        Returns:
-            tuple: (句子開始時間, 句子結束時間)
-        """
-        duration = seg_end - seg_start
-        
-        # 按字符比例分配時間
-        sent_len = len(sentence)
-        sent_ratio_start = char_pos / total_chars if total_chars > 0 else 0
-        sent_ratio_end = (char_pos + sent_len) / total_chars if total_chars > 0 else 1
-        
-        sent_start = seg_start + sent_ratio_start * duration
-        sent_end = seg_start + sent_ratio_end * duration
-        
-        return sent_start, sent_end
     
     def load_transcript(self, json_path: str) -> Dict:
         """

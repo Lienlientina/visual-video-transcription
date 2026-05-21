@@ -24,6 +24,9 @@
   ↓
 【步驟4】視覺分析 (Gemini 3.1 Flash Lite)
   ↓
+【步驟4.5】回想檢測 (Recall Detection)
+  • 使用語義檢索比對過去段落（SentenceTransformers）
+  ↓
 【步驟5】補充式融合 + 句子合併 (保留原文)
   ↓
 融合逐字稿 + JSON 詳細數據 + 可讀性優化
@@ -176,6 +179,8 @@ visual-video-transcription/
 │   │   └── Transcriber class: transcribe(), save_transcript()
 │   ├── deictic_detector.py        # 多語言指示詞偵測 + 精確時間
 │   │   └── DeicticDetector class: detect_from_transcript()
+│   ├── recall_detector.py         # 回想(Recall)檢測 + 語義比對
+│   │   └── RecallDetector class: detect_recalls()
 │   ├── frame_extractor.py         # 精確秒數截幀 (FFmpeg)
 │   │   └── FrameExtractor class: extract_frames_from_deictic()
 │   ├── vision_analyzer.py         # Gemini 視覺分析
@@ -350,6 +355,9 @@ Response: YES → 需要視覺分析
 - [x] Pipeline Test
 - [x] Unit Test
 
+- [x] 回想內容識別（Recall detection）— 初步實作並整合至 fusion
+- [x] 有效分段 / 句子合併優化 — 避免過長 segment
+
 ### 🚧 進行中 / 計劃中
 
 - [x] 影片加字幕功能（軟字幕）
@@ -360,10 +368,15 @@ Response: YES → 需要視覺分析
   - 支持嵌入向量檢索或輕量級檢索
   - 在前文中找到匹配內容
 
-- [ ] 回想內容識別與時間戳
-  - 偵測「剛剛提到的」、「前面說過」等回想型指示詞
-  - 語義匹配 + 返回原始時間戳
+- [x] 回想內容識別與時間戳（初步完成）
+  - 偵測「剛剛提到的」、「前面說過」等回想型指示詞，並以語義匹配回溯段落
+  - 已能將回想標注融合到輸出（JSON/TXT/SRT）
   - 融合到逐字稿中
+
+- [ ] 回想內容(進階)
+  - 透過理解內容來正確回想
+  - 減少使用單純判斷文字相似度的方法
+
 
 - [ ] 智能截圖相關內容
   - 提取回想內容對應的幀
@@ -462,6 +475,11 @@ result = fusion.fuse(transcript, analyses)
 
 ---
 ## Version History
+
+### v1.2.0 (2026-05-21)
+  - ✅ 新增內容回想功能並標註在 output (.json, .txt, .srt)
+  - ✅ 修復 segment 過長且包含其他 segment text 的問題
+  - ✅ 修復語義修正語言錯誤問題
 
 ### v1.1.0 (2026-05-20)
   - ✅ 修復 Gemini API Rate Limit 問題（批量語義修正：32 → 1 API call）
