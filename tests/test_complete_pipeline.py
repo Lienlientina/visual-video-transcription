@@ -106,7 +106,8 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     
     try:
         analyzer = VisionAnalyzer()
-        vision_data = analyzer.analyze_frames_batch(frames_result)
+        language = transcript_json.get("language", "en")
+        vision_data = analyzer.analyze_frames_batch(frames_result, language=language)
         
         success_count = vision_data["success"]
         if success_count == 0:

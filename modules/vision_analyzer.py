@@ -34,7 +34,7 @@ class VisionAnalyzer:
         print(f"[VisionAnalyzer] 使用 Gemini API")
         print(f"✓ Gemini 已就緒")
     
-    def analyze_image(self, image_path: str, context: str = "", deictic_word: str = "") -> Dict:
+    def analyze_image(self, image_path: str, context: str = "", deictic_word: str = "", language: str = "en") -> Dict:
         """
         分析單張圖片
         
@@ -42,6 +42,7 @@ class VisionAnalyzer:
             image_path (str): 圖片檔路徑
             context (str): 上下文信息，例如前後的文字
             deictic_word (str): 指示詞，例如「這個」、「藍色的部分」
+            language (str): 語言代碼，"en" 或 "zh"（預設"en"）
         
         Returns:
             dict:
@@ -67,8 +68,8 @@ class VisionAnalyzer:
             with open(image_path, 'rb') as f:
                 image_data = base64.standard_b64encode(f.read()).decode('utf-8')
             
-            # 構建提示詞
-            prompt = build_prompt_for_vision(str(image_path), context, deictic_word)
+            # 構建提示詞（根據語言參數）
+            prompt = build_prompt_for_vision(str(image_path), context, deictic_word, language=language)
             
             print(f"[VisionAnalyzer] 分析圖片: {image_path.name}")
             
@@ -117,7 +118,7 @@ class VisionAnalyzer:
                 "success": False
             }
     
-    def analyze_frames_batch(self, frames_data: Dict) -> Dict:
+    def analyze_frames_batch(self, frames_data: Dict, language: str = "en") -> Dict:
         """
         批量分析多個截幀
         
@@ -129,6 +130,7 @@ class VisionAnalyzer:
                         ...
                     ]
                 }
+            language (str): 語言代碼，"en" 或 "zh"（預設"en"）
         
         Returns:
             dict: 分析結果集合
@@ -143,7 +145,7 @@ class VisionAnalyzer:
         """
         frames = frames_data.get("frames", [])
         
-        print(f"\n[VisionAnalyzer] 開始批量分析 {len(frames)} 張圖片")
+        print(f"\n[VisionAnalyzer] 開始批量分析 {len(frames)} 張圖片 (語言: {language})")
         
         analyses = []
         success_count = 0
@@ -157,7 +159,7 @@ class VisionAnalyzer:
             
             print(f"  [{idx}/{len(frames)}] 分析: {Path(image_path).name}")
             
-            result = self.analyze_image(image_path, context, deictic_word)
+            result = self.analyze_image(image_path, context, deictic_word, language=language)
             result["timestamp"] = timestamp
             result["precise_seconds"] = precise_seconds  # ← 新增：保存精確秒數
             analyses.append(result)

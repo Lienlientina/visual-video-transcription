@@ -58,15 +58,15 @@ def ask_vision_decision(deictic_word, context_before, context_after, language="z
         if language == "zh":
             prompt = f"""在這個句子中：「{full_context}」
 
-「{deictic_word}」是指畫面上的具體物體/位置，還是語言上的概念/抽象參考？
+            「{deictic_word}」是指畫面上的具體物體/位置，還是語言上的概念/抽象參考？
 
-只回答「畫面」或「概念」："""
+            只回答「畫面」或「概念」："""
         else:  # English
             prompt = f"""In this sentence: "{full_context}"
 
-Does "{deictic_word}" refer to something visible on screen/in the image, or is it an abstract concept?
+            Does "{deictic_word}" refer to something visible on screen/in the image, or is it an abstract concept?
 
-Answer only "visual" or "abstract":"""
+            Answer only "visual" or "abstract":"""
         
         response = model.generate_content(prompt)
         answer = response.text.strip().lower()
@@ -184,31 +184,49 @@ def find_deictic_words(text, language="zh"):
     return results
 
 
-def build_prompt_for_vision(image_path, context="", deictic_word=""):
+def build_prompt_for_vision(image_path, context="", deictic_word="", language="en"):
     """
     為 Gemini 構建圖片理解提示詞
     
     Args:
         image_path (str): 圖片路徑
         context (str): 額外上下文，例如前後的文字內容
-        deictic_word (str): 指示詞，例如「這個」、「藍色的部分」
+        deictic_word (str): 指示詞，例如「這個」、「藍色的部分」、"this"、"that part"
+        language (str): 語言代碼，"en" 或 "zh"（預設"en"）
     
     Returns:
         str: 提示詞內容
     """
-    if deictic_word:
-        # 有指示詞時，提取簡潔的內容補充
-        prompt = f"""看這張圖片，找出「{deictic_word}」指向的內容。
+    if language == "en":
+        # 英文提示詞
+        if deictic_word:
+            # 有指示詞時，提取簡潔的內容補充
+            prompt = f"""Look at this image and find what "{deictic_word}" refers to.
 
-如果看到：
-- 公式、算式 → 只寫該部分的數學式
-- 文字、代碼 → 只寫該部分的內容
-- 圖形、物體 → 簡單描述該部分（1-2詞）
+            If you see:
+            - Formula/equation → write only that math expression
+            - Text/code → write only that content
+            - Image/object → simple 1-2 word description
 
-不要解釋，直接寫內容。"""
+            Just write the content, no explanation."""
+        else:
+            # 沒有指示詞時，簡潔描述
+            prompt = """Briefly describe the main content in this image (max 2 sentences)."""
     else:
-        # 沒有指示詞時，簡潔描述
-        prompt = f"""簡潔描述這張圖片的主要內容（不超過2句話）。"""
+        # 中文提示詞
+        if deictic_word:
+            # 有指示詞時，提取簡潔的內容補充
+            prompt = f"""看這張圖片，找出「{deictic_word}」指向的內容。
+
+            如果看到：
+            - 公式、算式 → 只寫該部分的數學式
+            - 文字、代碼 → 只寫該部分的內容
+            - 圖形、物體 → 簡單描述該部分（1-2詞）
+
+            不要解釋，直接寫內容。"""
+        else:
+            # 沒有指示詞時，簡潔描述
+            prompt = """簡潔描述這張圖片的主要內容（不超過2句話）。"""
     
     return prompt
 

@@ -77,7 +77,7 @@ class Transcriber:
             str(video_path),
             language=language,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500)
+            vad_parameters=dict(min_silence_duration_ms=250)
         )
         
         # 將 segments 轉換為列表並格式化
@@ -98,9 +98,9 @@ class Transcriber:
             "segments": result_segments
         }
         
-        # ← 新增：在這裡細分過長的 segment（在語言偵測前）
-        result["segments"] = self._split_long_segments(result["segments"])
-        print(f"[Transcriber] 細分過長段落後共 {len(result['segments'])} 個片段")
+        # ← 新增：按句子邊界細分過長 segment（方案2）
+        result["segments"] = self._split_segments_by_sentences(result["segments"])
+        print(f"[Transcriber] 按句子細分後共 {len(result['segments'])} 個片段")
         
         # ← 新增：根據實際文本內容修正語言判斷
         detected_language = self._detect_content_language(result["segments"])
@@ -253,9 +253,9 @@ class Transcriber:
         
         return output_path
     
-    def _split_long_segments(self, segments: List[Dict]) -> List[Dict]:
+    def _split_segments_by_sentences(self, segments: List[Dict]) -> List[Dict]:
         """
-        將過長的 segment 細分成多個短 segment
+        按英文句子邊界細分過長 segment（使用 NLTK 本地句子分割）
         
         Args:
             segments: 原始 segment 列表
@@ -263,6 +263,19 @@ class Transcriber:
         Returns:
             list: 細分後的 segment 列表
         """
+        try:
+            from nltk.tokenize import sent_tokenize
+            import nltk
+            nltk.download('punkt_tab')
+            # 確保 punkt 數據已下載
+            try:
+                nltk.data.find('tokenizers/punkt')
+            except LookupError:
+                nltk.download('punkt', quiet=True)
+        except ImportError:
+            print("[Transcriber] ⚠️  NLTK 未安裝，跳過句子分割")
+            return segments
+        
         split_segments = []
         
         for seg in segments:
@@ -275,86 +288,64 @@ class Transcriber:
                 split_segments.append(seg)
                 continue
             
-            # 需要分割
+            # 用 NLTK 分割句子（即使沒有完整標點也能工作）
+            sentences = sent_tokenize(text)
+            
+            if len(sentences) <= 1:
+                # 無法分割，直接加入
+                split_segments.append(seg)
+                continue
+            
+            # 為每個句子計算時間並創建 segment
             duration = end - start
-            num_parts = (len(text) + self.MAX_SEGMENT_LENGTH - 1) // self.MAX_SEGMENT_LENGTH
-            time_per_part = duration / num_parts
+            total_chars = len(text)
+            char_pos = 0
             
-            # 按標點或字符分割文本
-            parts = self._split_text_by_punctuation(text, num_parts)
-            
-            # 為每一部分創建新 segment
-            for idx, part in enumerate(parts):
-                if not part.strip():
+            for sentence in sentences:
+                if not sentence.strip():
                     continue
                 
-                part_start = start + idx * time_per_part
-                part_end = start + (idx + 1) * time_per_part
+                sent_start, sent_end = self._estimate_time_for_sentence(
+                    sentence, char_pos, total_chars, start, end
+                )
                 
                 new_seg = {
-                    "time": seconds_to_timestamp(part_start),
-                    "text": part.strip(),
-                    "start": part_start,
-                    "end": part_end
+                    "time": seconds_to_timestamp(sent_start),
+                    "text": sentence.strip(),
+                    "start": sent_start,
+                    "end": sent_end
                 }
                 split_segments.append(new_seg)
+                char_pos += len(sentence)
         
         return split_segments
     
-    def _split_text_by_punctuation(self, text: str, num_parts: int) -> List[str]:
+    def _estimate_time_for_sentence(self, sentence: str, char_pos: int, total_chars: int, 
+                                     seg_start: float, seg_end: float) -> Tuple[float, float]:
         """
-        按標點符號分割文本
+        根據字符位置估算句子的時間區間
         
         Args:
-            text: 要分割的文本
-            num_parts: 目標分割數
+            sentence: 句子文本
+            char_pos: 該句子在整個 segment 中的字符起始位置
+            total_chars: segment 的總字符數
+            seg_start: segment 的開始時間（秒）
+            seg_end: segment 的結束時間（秒）
         
         Returns:
-            list: 分割後的文本列表
+            tuple: (句子開始時間, 句子結束時間)
         """
-        if num_parts <= 1:
-            return [text]
+        duration = seg_end - seg_start
         
-        # 優先按標點分割
-        punctuation_marks = ['。', '，', '、']
+        # 按字符比例分配時間
+        sent_len = len(sentence)
+        sent_ratio_start = char_pos / total_chars if total_chars > 0 else 0
+        sent_ratio_end = (char_pos + sent_len) / total_chars if total_chars > 0 else 1
         
-        for mark in punctuation_marks:
-            if mark in text:
-                parts = text.split(mark)
-                
-                # 如果標點分割的部分足夠多
-                if len(parts) >= num_parts:
-                    result = []
-                    items_per_group = max(1, len(parts) // num_parts)
-                    
-                    for group_idx in range(num_parts):
-                        start_idx = group_idx * items_per_group
-                        if group_idx == num_parts - 1:
-                            end_idx = len(parts)
-                        else:
-                            end_idx = (group_idx + 1) * items_per_group
-                        
-                        group_parts = parts[start_idx:end_idx]
-                        combined = mark.join(group_parts)
-                        if combined and not combined.endswith(mark):
-                            combined += mark
-                        if combined:
-                            result.append(combined)
-                    
-                    return result
+        sent_start = seg_start + sent_ratio_start * duration
+        sent_end = seg_start + sent_ratio_end * duration
         
-        # 按字符均勻分割
-        chars_per_part = max(1, len(text) // num_parts)
-        result = []
-        for i in range(num_parts):
-            if i == num_parts - 1:
-                part = text[i * chars_per_part:]
-            else:
-                part = text[i * chars_per_part:(i + 1) * chars_per_part]
-            if part:
-                result.append(part)
-        
-        return result
+        return sent_start, sent_end
     
     def load_transcript(self, json_path: str) -> Dict:
         """
