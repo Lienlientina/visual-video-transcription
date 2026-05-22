@@ -95,10 +95,10 @@ class Transcriber:
         
         # ← 簡化：多層次語言檢測策略（只返回 en 或 zh）
         detected_lang = info.language if info else None
-        print(f"[Transcriber] Whisper 检测语言: {detected_lang}")
+        print(f"[Transcriber] Whisper 檢測語言: {detected_lang}")
         
         content_lang = self._detect_content_language(result_segments)
-        print(f"[Transcriber] 内容分析语言: {content_lang}")
+        # print(f"[Transcriber] 內容分析語言: {content_lang}")
         
         result_lang = content_lang
         
@@ -147,13 +147,13 @@ class Transcriber:
             return "en"
         
         english_ratio = english_letter_count / meaningful_chars
-        
+
         # 判斷主要語言（閾值：英文占 > 50% 則判為英文；反之為中文）
         if english_ratio > 0.5:
-            print(f"[Transcriber] 判定為: 英文")
+            print(f"[Transcriber] 判定為: 英文 (ratio={english_ratio:.2f})")
             return "en"
         else:
-            print(f"[Transcriber] 判定為: 中文")
+            print(f"[Transcriber] 判定為: 中文 (ratio={english_ratio:.2f})")
             return "zh"
     
 

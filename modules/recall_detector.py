@@ -17,7 +17,7 @@ RECALL_TYPES = {
         "direct": [
             "如我所說", "正如我說過", "我之前提到", "剛剛", "剛才",
             "前面", "之前", "前文", "我們說過", "上面提到", "基本上",
-            "換句話說", "簡單來說", "另外", "延伸", "進一步"
+            "換句話說", "簡單來說", "另外", "延伸", "進一步", "跟前面"
         ],
         "contrast": ["不同於", "不一樣", "相反地", "相反", "不同"],  # 改用更靈活的匹配
     },
@@ -141,42 +141,61 @@ class RecallDetector:
                     )
 
             elif recall_type == "contrast":
-                # 對比提及：找「相反」的內容（相似度中等）
-                # 策略：相似度在 0.3-0.7 之間的內容
-                valid_mask = (similarities > 0.3) & (similarities < 0.7)
-                valid_indices = np.where(valid_mask)[0]
+                # 對比提及：先避開太近的段落，避免抓到同一小節內的相似內容
+                # 再從較早的段落裡優先挑「已足夠相關、但更早」的對照內容
+                current_seg_time = segment.get("time", "[?]")
+                current_start = segment.get("start", 0.0)
+                current_end = segment.get("end", 0.0)
+                min_gap_seconds = 60.0
+                contrast_min_similarity = 0.45
 
-                if len(valid_indices) > 0:
-                    # 在有效範圍內找最接近 0.5 的（最相反）
-                    distances_to_mid = np.abs(similarities[valid_indices] - 0.5)
-                    best_in_valid = valid_indices[np.argmin(distances_to_mid)]
-                    best_score = similarities[best_in_valid]
+                candidate_indices = []
+                for past_idx in range(idx):
+                    past_segment = segments[past_idx]
+                    past_start = past_segment.get("start", 0.0)
+                    past_end = past_segment.get("end", past_segment.get("start", 0.0))
+                    if past_start >= 8.0 and current_start - past_end >= min_gap_seconds:
+                        candidate_indices.append(past_idx)
 
-                    current_seg_time = segment.get("time", "[?]")
-                    current_start = segment.get("start", 0)
-                    current_end = segment.get("end", 0)
-                    recalled_seg_time = segments[best_in_valid].get("time", "[?]")
-                    recalled_start = segments[best_in_valid].get("start", 0)
-                    recalled_end = segments[best_in_valid].get("end", 0)
+                if not candidate_indices:
+                    candidate_indices = list(range(idx))
 
-                    recalls.append(
-                        {
-                            "segment_idx": int(idx),
-                            "segment_time": current_seg_time,
-                            "segment_time_range": f"{current_start:.2f}s-{current_end:.2f}s",
-                            "recall_word": recall_word,
-                            "recall_type": "contrast",
-                            "recalled_segment_idx": int(best_in_valid),
-                            "recalled_text": segments[best_in_valid]["text"][:50],
-                            "recalled_time": recalled_seg_time,
-                            "recalled_time_range": f"{recalled_start:.2f}s-{recalled_end:.2f}s",
-                            "similarity_score": float(best_score),
-                            "contrast_marker": "↔",
-                        }
-                    )
-                    print(
-                        f"[RecallDetector] ↔ 對比提及: 段落{idx}{current_seg_time}({current_start:.2f}~{current_end:.2f}s) ↔ 段落{best_in_valid}{recalled_seg_time}({recalled_start:.2f}~{recalled_end:.2f}s)『{recall_word}』 (相似度: {best_score:.2f})"
-                    )
+                qualified_indices = [
+                    candidate_idx
+                    for candidate_idx in candidate_indices
+                    if similarities[candidate_idx] >= contrast_min_similarity
+                ]
+
+                if qualified_indices:
+                    # 優先選最早的合格段落，避免抓到同一小節的細節步驟
+                    best_in_valid = min(qualified_indices)
+                else:
+                    # 若沒有合格段落，再退回選語義最相關的舊段落
+                    best_in_valid = candidate_indices[int(np.argmax(similarities[candidate_indices]))]
+
+                best_score = similarities[best_in_valid]
+                recalled_seg_time = segments[best_in_valid].get("time", "[?]")
+                recalled_start = segments[best_in_valid].get("start", 0.0)
+                recalled_end = segments[best_in_valid].get("end", 0.0)
+
+                recalls.append(
+                    {
+                        "segment_idx": int(idx),
+                        "segment_time": current_seg_time,
+                        "segment_time_range": f"{current_start:.2f}s-{current_end:.2f}s",
+                        "recall_word": recall_word,
+                        "recall_type": "contrast",
+                        "recalled_segment_idx": int(best_in_valid),
+                        "recalled_text": segments[best_in_valid]["text"][:50],
+                        "recalled_time": recalled_seg_time,
+                        "recalled_time_range": f"{recalled_start:.2f}s-{recalled_end:.2f}s",
+                        "similarity_score": float(best_score),
+                        "contrast_marker": "↔",
+                    }
+                )
+                print(
+                    f"[RecallDetector] ↔ 對比提及: 段落{idx}{current_seg_time}({current_start:.2f}~{current_end:.2f}s) ↔ 段落{best_in_valid}{recalled_seg_time}({recalled_start:.2f}~{recalled_end:.2f}s)『{recall_word}』 (相似度: {best_score:.2f})"
+                )
 
         print(f"\n[RecallDetector] 偵測完成，共找到 {len(recalls)} 個回想內容")
         return {"total_recalls": len(recalls), "recalls": recalls}
