@@ -131,25 +131,32 @@ class FusionEngine:
         # ← 新增：融合回想標注
         if recall_data:
             for recall in recall_data.get("recalls", []):
-                segment_idx = recall["segment_idx"]
-                recall_word = recall["recall_word"]
-                recalled_time = recall["recalled_time"]
-                recalled_text = recall["recalled_text"]
+                segment_idx = recall.get("segment_idx")
+                recall_cue = recall.get("recall_cue", "")
+                recalled_segment_idx = recall.get("recalled_segment_idx")
+                recalled_text = recall.get("recalled_text", "")
                 recall_type = recall.get("recall_type", "direct")
-                similarity = recall.get("similarity_score", 0.0)
+                confidence = recall.get("confidence", 0.0)
                 
-                if segment_idx < len(fused_segments):
+                if segment_idx is not None and 0 <= segment_idx < len(fused_segments):
                     segment = fused_segments[segment_idx]
                     segment["modified"] = True
+                    
+                    # ← 新增：從 fused_segments 中補充 recalled_time
+                    recalled_time = ""
+                    if recalled_segment_idx is not None and 0 <= recalled_segment_idx < len(fused_segments):
+                        recalled_time = fused_segments[recalled_segment_idx].get("time", "")
                     
                     # 保存 recall 信息到 result
                     result["recalls"].append({
                         "segment_idx": segment_idx,
-                        "recall_word": recall_word,
-                        "recalled_time": recalled_time,
+                        "recall_cue": recall_cue,
+                        "recalled_segment_idx": recalled_segment_idx,
                         "recalled_text": recalled_text,
                         "recall_type": recall_type,
-                        "similarity_score": similarity
+                        "confidence": confidence,
+                        "reasoning": recall.get("reasoning", ""),
+                        "recalled_time": recalled_time  # ← 新增
                     })
             
             result["total_recalls"] = len(recall_data.get("recalls", []))
@@ -207,13 +214,21 @@ class FusionEngine:
         merged_segments = self._merge_short_segments(fused_data["segments"])
         
         # ← 新增：建立 recall 映射 (segment_idx → recall_list)
+        # 並從 segments 中補充 time 信息
         recall_map = {}
-        # 優先使用 fused_data 中的 recalls（新方式）
         recalls = fused_data.get("recalls", []) or recall_data.get("recalls", []) if recall_data else []
+        segments_list = fused_data.get("segments", [])
+        
         for recall in recalls:
             segment_idx = recall.get("segment_idx")
             if segment_idx not in recall_map:
                 recall_map[segment_idx] = []
+            
+            # ← 新增：補充被回想的時間
+            recalled_segment_idx = recall.get("recalled_segment_idx")
+            if recalled_segment_idx is not None and recalled_segment_idx < len(segments_list):
+                recall["recalled_time"] = segments_list[recalled_segment_idx].get("time", "")
+            
             recall_map[segment_idx].append(recall)
         
         # 輸出為可讀的文本格式
@@ -242,13 +257,13 @@ class FusionEngine:
                     for recall in recall_map[segment_idx]:
                         recall_time = recall.get("recalled_time", "")
                         recall_text = recall.get("recalled_text", "")[:50]  # 前 50 字
-                        similarity = recall.get("similarity_score", 0)
+                        confidence = recall.get("confidence", 0)
                         recall_type = recall.get("recall_type", "direct")
                         
                         if recall_type == "contrast":
-                            marker = f"[↑ ↔ {recall_time} '{recall_text}...' (相似度:{similarity:.2f})]"
+                            marker = f"[↔ {recall_time} '{recall_text}...' (信心:{confidence:.1%})]"
                         else:
-                            marker = f"[↑ {recall_time} '{recall_text}...' (相似度:{similarity:.2f})]"
+                            marker = f"[↑ {recall_time} '{recall_text}...' (信心:{confidence:.1%})]"
                         
                         f.write(f"{marker}\n")
                 
@@ -330,28 +345,53 @@ class FusionEngine:
         if output_name is None:
             output_name = "fused_transcript"
         
-        # ← 新增：為每個 segment 添加格式化的 recalls_text
-        recall_map = {}
+        # ← 新增：為每個 recall 添加 recalled_time（被回想的段落時間）
+        segments_list = fused_data.get("segments", [])
+        recalls_with_time = []
+        
         for recall in fused_data.get("recalls", []):
+            # 複製 recall 以避免修改原始數據
+            recall_copy = recall.copy()
+            
+            # ← 新增：補充被回想的時間
+            recalled_segment_idx = recall.get("recalled_segment_idx")
+            if recalled_segment_idx is not None and recalled_segment_idx < len(segments_list):
+                recall_copy["recalled_time"] = segments_list[recalled_segment_idx].get("time", "")
+            else:
+                recall_copy["recalled_time"] = ""
+            
+            # ← 新增：確保使用新字段名，舊名稱應轉換
+            # 如果只有similarity_score沒有confidence，則轉換
+            if "confidence" not in recall_copy and "similarity_score" in recall_copy:
+                recall_copy["confidence"] = recall_copy.pop("similarity_score")
+            
+            recalls_with_time.append(recall_copy)
+        
+        # 更新 fused_data 中的 recalls
+        fused_data_to_save = fused_data.copy()
+        fused_data_to_save["recalls"] = recalls_with_time
+        
+        # 添加格式化 recall 文本到每個 segment
+        recall_map = {}
+        for recall in recalls_with_time:
             segment_idx = recall.get("segment_idx")
             if segment_idx not in recall_map:
                 recall_map[segment_idx] = []
             recall_map[segment_idx].append(recall)
         
-        # 添加格式化 recall 文本到每個 segment
-        for idx, segment in enumerate(fused_data.get("segments", [])):
+        for idx, segment in enumerate(fused_data_to_save.get("segments", [])):
             if idx in recall_map:
                 recalls_text = []
                 for recall in recall_map[idx]:
                     recall_time = recall.get("recalled_time", "")
                     recall_text = recall.get("recalled_text", "")[:50]
-                    similarity = recall.get("similarity_score", 0)
+                    confidence = recall.get("confidence", 0)
                     recall_type = recall.get("recall_type", "direct")
                     
                     if recall_type == "contrast":
-                        formatted = f"[↔ {recall_time} {recall_text}... (相似:{similarity:.2f})]"
+                        formatted = f"[↔ {recall_time} {recall_text}... (信心:{confidence:.1%})]"
                     else:
-                        formatted = f"[{recall_time} {recall_text}... (相似:{similarity:.2f})]"
+                        formatted = f"[↑ {recall_time} {recall_text}... (信心:{confidence:.1%})]"
                     
                     recalls_text.append(formatted)
                 
@@ -360,7 +400,7 @@ class FusionEngine:
         output_path = RESULTS_DIR / f"{output_name}.json"
         
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(fused_data, f, ensure_ascii=False, indent=2, cls=NumpyEncoder)
+            json.dump(fused_data_to_save, f, ensure_ascii=False, indent=2, cls=NumpyEncoder)
         
         print(f"[FusionEngine] 融合數據已保存至: {output_path}")
         

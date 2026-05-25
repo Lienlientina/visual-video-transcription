@@ -79,6 +79,7 @@ SKIP_PATTERNS_ZH = [
 ]
 
 SKIP_PATTERNS_EN = [
+    # 抽象指代（指前文概念）
     "that is",         # 「that is why」
     "that means",
     "this is why",
@@ -89,6 +90,20 @@ SKIP_PATTERNS_EN = [
     "this shows",
     "this is because",
     "that explains",
+    
+    "there are", "there're",
+    "there is", "there's",
+    "there was",
+    "there were",
+    "there have",
+    "there has",
+    
+    "this time", 
+    "this one", 
+    "that one",
+    
+    "on the one hand",
+    "on the other hand",
 ]
 
 # 語言模式映射

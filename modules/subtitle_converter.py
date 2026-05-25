@@ -77,7 +77,7 @@ class SubtitleConverter:
                     if recall_type == "contrast":
                         annotation = f"[↔ {recall_time} {recall_text}...]"
                     else:
-                        annotation = f"[回想 {recall_time} {recall_text}...]"
+                        annotation = f"[↑ {recall_time} {recall_text}...]"
                     
                     subtitle_text = f"{annotation}\n{subtitle_text}"
             

@@ -164,34 +164,6 @@ class DeicticDetector:
         precise_seconds = segment_start + (relative_position * segment_duration)
         
         return precise_seconds
-    
-    def filter_by_time(self, deictic_data: Dict, time_ranges: List[tuple] = None) -> Dict:
-        """
-        根據時間範圍篩選指示詞
-        
-        Args:
-            deictic_data (dict): 偵測結果
-            time_ranges (List[tuple], optional): 時間範圍列表，例如 [("0:00:00", "0:00:30"), ...]
-        
-        Returns:
-            dict: 篩選後的結果
-        """
-        if time_ranges is None:
-            return deictic_data
-        
-        filtered_words = []
-        for word_info in deictic_data["deictic_words"]:
-            time_str = word_info["time"]
-            # 簡單比較 (實際應該轉為秒數)
-            for time_range in time_ranges:
-                if time_range[0] <= time_str <= time_range[1]:
-                    filtered_words.append(word_info)
-                    break
-        
-        return {
-            "total_deictic_words": len(filtered_words),
-            "deictic_words": filtered_words
-        }
 
 
 if __name__ == "__main__":

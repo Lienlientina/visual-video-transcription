@@ -143,22 +143,36 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     print("="*70)
     
     language = transcript_json.get("language", "en")
-    recall_data = {"total_recalls": 0, "recalls": []}
+    recall_data = {"recalls": []}
     
     try:
         recall_detector = RecallDetector()
         recall_data = recall_detector.detect_recalls(
             transcript_json,
-            language=language,
-            similarity_threshold=0.7
+            language=language
         )
         
         print(f"\n✓ 回想內容識別完成")
-        print(f"  - 總共發現: {recall_data['total_recalls']} 個回想")
+        print(f"  - 總共發現: {len(recall_data['recalls'])} 個回想")
+        
+        # ← 新增：打印每個 recall 的詳細信息（包含時間）
+        segments_list = transcript_json.get("segments", [])
+        for idx, recall in enumerate(recall_data['recalls'], 1):
+            recall_type = recall.get('recall_type', 'unknown')
+            recall_cue = recall.get('recall_cue', '')
+            segment_idx = recall.get('segment_idx')
+            recalled_idx = recall.get('recalled_segment_idx')
+            confidence = recall.get('confidence', 0)
+            
+            current_time = segments_list[segment_idx].get('time', '?') if segment_idx < len(segments_list) else '?'
+            recalled_time = segments_list[recalled_idx].get('time', '?') if recalled_idx < len(segments_list) else '?'
+            
+            print(f"    [{idx}] {current_time} 『{recall_cue}』 → {recalled_time} ({recall_type}, 信心:{confidence:.0%})")
+    
     except Exception as e:
         print(f"⚠ 回想內容識別失敗（非關鍵）: {e}")
         print(f"  - 繼續使用融合...")
-        recall_data = {"total_recalls": 0, "recalls": []}
+        recall_data = {"recalls": []}
     
     # ========== 步驟 5: 融合 ==========
     print("\n" + "="*70)
@@ -172,7 +186,7 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print(f"\n✓ 融合完成")
         print(f"  - 修改段落: {fused_data['modified_segments']}/{fused_data['total_segments']}")
         print(f"  - 總替換數: {fused_data['total_replacements']}")
-        if recall_data.get("total_recalls", 0) > 0:
+        if fused_data.get("total_recalls", 0) > 0:
             print(f"  - 回想標注: {fused_data.get('total_recalls', 0)} 個")
     except Exception as e:
         print(f"✗ 融合失敗: {e}")

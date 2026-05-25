@@ -47,13 +47,13 @@ class Transcriber:
         
         print("[Transcriber] 模型加載完成")
     
-    def transcribe(self, video_path: str, language: str = "zh") -> Dict:
+    def transcribe(self, video_path: str, language: str = None) -> Dict:
         """
         將影片轉錄為逐字稿
         
         Args:
             video_path: 影片檔路徑
-            language: 語言代碼，預設中文 "zh"
+            language: 語言代碼，預設 None（自動檢測）。可指定 "zh"、"en" 等強制使用特定語言
         
         Returns:
             dict: 包含segments的字典
@@ -78,7 +78,8 @@ class Transcriber:
             language=language,
             vad_filter=True,
             vad_parameters=dict(
-                min_silence_duration_ms=250, threshold=0.5)
+                min_silence_duration_ms=100, threshold=0.3, 
+                min_speech_duration_ms=250)
         )
         
         # 將 segments 轉換為列表並格式化
@@ -189,55 +190,67 @@ class Transcriber:
             
             print(f"[Transcriber] 開始進行語義修正（語言: {language}）...")
             
-            # ← 優化：把所有 segments 串成一段，用分隔符連接
-            segments_text = "\n---\n".join([
-                f"[{i}] {seg['text']}" 
-                for i, seg in enumerate(segments)
-            ])
+            # ← 改進：使用 JSON 格式確保結構完整性
+            segments_dict = {str(i): seg['text'] for i, seg in enumerate(segments)}
+            segments_json = json.dumps(segments_dict, ensure_ascii=False, indent=2)
             
-            # ← 一次性發給 Gemini（只需 1 個請求，而不是 N 個）
+            # ← 一次性發給 Gemini，要求以 JSON 格式返回
             if is_chinese:
                 prompt = f"""請修正以下繁體中文語音轉錄的錯字，修正以下幾種情況：
-                    1. 同音字錯誤（例如「咋」→「這」、「再」→「在」）
-                    2. 專有名詞誤認（例如「派森」→「Python」）
-                    3. 明顯的語法或文法錯誤
-                    
-                    只輸出修正後的文本，不要包含任何說明。
-                    
-                    原文：{segments_text}
-                    
-                    修正後："""
+                1. 同音字錯誤（例如「咋」→「這」、「再」→「在」）
+                2. 專有名詞誤認（例如「派森」→「Python」）
+                3. 明顯的語法或文法錯誤
+
+                輸出格式：JSON 對象，鍵為索引字符串（"0", "1"...），值為修正後的文本。
+                只輸出 JSON，不要包含任何說明或 Markdown 標記。
+
+                原文：
+                {segments_json}
+
+                修正後（必須是有效的 JSON）："""
             else:
                 prompt = f"""Please correct the following English speech transcription errors. Fix:
-                    1. Homophone errors (e.g., "its" → "it's", "there" → "their")
-                    2. Proper noun misrecognition (e.g., "centre" → "center" if context suggests US English)
-                    3. Obvious grammar or spelling errors
-                    
-                    Only output the corrected text, no explanations.
-                    
-                    Original text: {segments_text}
-                    
-                    Corrected text:"""
+                1. Homophone errors (e.g., "its" → "it's", "there" → "their")
+                2. Proper noun misrecognition (e.g., "centre" → "center" if context suggests US English)
+                3. Obvious grammar or spelling errors
+
+                Output format: JSON object with string keys ("0", "1"...) mapping to corrected text.
+                Output only valid JSON, no explanations or markdown.
+
+                Original text:
+                {segments_json}
+
+                Corrected text (must be valid JSON):"""
             
             response = model.generate_content(prompt)
             corrected_all = response.text.strip()
             
-            # ← 把返回的文本按分隔符分割，更新各 segment
-            corrected_lines = corrected_all.split("\n---\n")
+            # ← 移除可能的 Markdown 標記（```json ... ```）
+            if corrected_all.startswith("```"):
+                corrected_all = corrected_all.split("```")[1]
+                if corrected_all.startswith("json"):
+                    corrected_all = corrected_all[4:]
+            if corrected_all.endswith("```"):
+                corrected_all = corrected_all[:-3]
+            corrected_all = corrected_all.strip()
+            
+            # ← 解析 JSON
+            corrected_dict = json.loads(corrected_all)
             corrected_segments = []
             
+            # ← 逐個 segment 應用修正（安全地處理缺失的鍵）
             for i, seg in enumerate(segments):
                 corrected_seg = seg.copy()
+                str_idx = str(i)
                 
-                if i < len(corrected_lines):
-                    corrected_text = corrected_lines[i].strip()
-                    
-                    # 提取修正後的文本（去掉編號前綴）
-                    prefix = f"[{i}] "
-                    if corrected_text.startswith(prefix):
-                        corrected_text = corrected_text[len(prefix):]
-                    
-                    corrected_seg["text"] = corrected_text
+                if str_idx in corrected_dict:
+                    corrected_text = corrected_dict[str_idx]
+                    if isinstance(corrected_text, str):
+                        corrected_seg["text"] = corrected_text
+                    else:
+                        print(f"[Transcriber] ⚠️  段落 {i} 修正格式錯誤（非字符串），保持原文")
+                else:
+                    print(f"[Transcriber] ⚠️  段落 {i} 在 Gemini 返回中缺失，保持原文")
                 
                 corrected_segments.append(corrected_seg)
             
@@ -246,6 +259,10 @@ class Transcriber:
             
             print(f"[Transcriber] 語義修正完成，共 {len(corrected_segments)} 個片段")
         
+        except json.JSONDecodeError as e:
+            print(f"[Transcriber] ⚠️  Gemini 返回無效 JSON: {e}")
+            print(f"[Transcriber] 原始返回: {corrected_all[:200]}...")
+            print(f"[Transcriber] 保留原文")
         except Exception as e:
             print(f"[Transcriber] ⚠️  語義修正失敗: {e}，保留原文")
         

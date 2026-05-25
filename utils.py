@@ -243,15 +243,3 @@ def build_prompt_for_vision(image_path, context="", deictic_word="", language="e
             prompt = """簡潔描述這張圖片的主要內容（不超過2句話）。"""
     
     return prompt
-
-
-# 測試用
-if __name__ == "__main__":
-    # 測試時間轉換
-    print(seconds_to_timestamp(23))
-    print(seconds_to_timestamp(125))
-    print(timestamp_to_seconds("[0:02:05]"))
-    
-    # 測試指示詞檢測
-    text = "把這個公式代入那個方程式，然後點擊這裡的按鈕"
-    print(find_deictic_words(text))
