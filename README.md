@@ -27,6 +27,11 @@
 【步驟4.5】回想檢測 (Recall Detection)
   • 純 LLM 語義分析（Gemini 3.1 Flash Lite）
   ↓
+【步驟5b】回想截圖提取 + ROI 裁切 (NEW)
+  • Vision API ROI 偵測（若有 API key）
+  • 失敗時直接輸出完整圖片
+  • 保存原始截圖 + 裁切版本
+  ↓
 【步驟5】補充式融合 + 句子合併 (保留原文)
   ↓
 融合逐字稿 + JSON 詳細數據 + 可讀性優化
@@ -41,6 +46,7 @@
 | **FrameExtractor** | 精確秒數截幀（±0.1秒） | ✅ 完成 |
 | **VisionAnalyzer** | Gemini 3.1 Flash Lite 視覺分析 | ✅ 完成 |
 | **FusionEngine** | 補充式融合 + 句子合併 | ✅ 完成 |
+| **ROIDetector** | Recall 截圖 ROI 偵測 + 裁切 | ✅ 完成 |
 
 ---
 
@@ -66,6 +72,8 @@ ffmpeg-python==0.2.0
 requests>=2.31.0
 google-generativeai>=0.3.0
 python-dotenv>=0.19.0
+nltk>=3.8.0
+opencv-python>=4.5.0
 ```
 
 ---
@@ -186,7 +194,9 @@ visual-video-transcription/
 │   ├── vision_analyzer.py         # Gemini 視覺分析
 │   │   └── VisionAnalyzer class: analyze_image(), analyze_frames_batch()
 │   ├── fusion_engine.py           # 補充式融合 + 句子合併
-│   │   └── FusionEngine class: fuse()
+│   │   └── FusionEngine class: fuse(), generate_recall_frames()
+│   ├── roi_detector.py            # Recall 截圖 ROI 偵測與裁切
+│   │   └── ROIDetector class: detect_and_crop()
 │   └── subtitle_converter.py      # Generate SRT caption
 │       └── SubtitleConverter class: fused_json_to_srt()
 │
@@ -353,6 +363,8 @@ Response: YES → 需要視覺分析
 - [x] Unit Test
 - [x] 回想內容識別（Recall detection）— 純 LLM 方式，語義分析，信心度過濾
 - [x] 有效分段 / 句子合併優化 — 修復語言偵測誤判
+- [x] Recall 截圖提取 + ROI 裁切 — Vision API + 完整圖片備選
+- [x] 並行截圖生成 — 為每個 Recall 生成原始+裁切圖
 
 ### 🚧 進行中 / 計劃中
 
@@ -463,6 +475,12 @@ result = fusion.fuse(transcript, analyses)
 
 ---
 ## Version History
+
+### v1.2.2 (2026-05-26)
+  - ✅ ROI 偵測系統改進：Vision API 優先 → 完整圖片備選（移除啟發式方法）
+  - ✅ Recall 截圖生成：為每個 Recall 自動提取幀 + 裁切
+  - ✅ 終端輸出改進：顯示時間戳+觸發詞+檔案路徑
+  - ✅ 支援 PPT/圖片/彩色背景內容
 
 ### v1.2.1 (2026-05-26)
   - ✅ Recall Detection 從 Embedding 方法改成純 LLM（Gemini 3.1 Flash Lite）

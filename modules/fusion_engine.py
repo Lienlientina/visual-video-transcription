@@ -405,6 +405,129 @@ class FusionEngine:
         print(f"[FusionEngine] 融合數據已保存至: {output_path}")
         
         return output_path
+    
+    def generate_recall_frames(self, video_path: str, recall_data: Dict, 
+                              fused_data: Dict = None) -> Dict:
+        """
+        為每個 Recall 生成原始截圖和裁切截圖
+        
+        流程：
+          1. 為每個 recall 提取對應時刻的幀（原始截圖）
+          2. 使用 ROI 偵測器識別關鍵區域
+          3. 裁切關鍵區域（ROI 截圖）
+          4. 在 recall 記錄中添加圖片路徑和 ROI 座標
+        
+        Args:
+            video_path (str): 影片路徑
+            recall_data (dict): Recall 數據（包含所有回想紀錄）
+            fused_data (dict): 融合數據（可選，用於 segment 信息）
+        
+        Returns:
+            dict: 更新後的 recall_data（包含圖片路徑和 ROI 座標）
+        """
+        from modules.roi_detector import ROIDetector
+        from modules.frame_extractor import FrameExtractor
+        
+        print("\n[FusionEngine] 開始生成 Recall 幀...")
+        
+        roi_detector = ROIDetector(use_vision_api=False, verbose=True)
+        frame_extractor = FrameExtractor()
+        
+        # 確保輸出目錄存在
+        frames_dir = RESULTS_DIR / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 獲取 segments 清單（用於提取時間信息）
+        segments_list = fused_data.get("segments", []) if fused_data else []
+        
+        processed_count = 0
+        failed_count = 0
+        
+        for recall in recall_data.get("recalls", []):
+            recall_id = recall.get("recall_id", processed_count + failed_count)
+            segment_idx = recall.get("segment_idx")
+            
+            try:
+                # Step 1：取得該 Recall 時刻的幀
+                segment_time = recall.get("segment_start_seconds")
+                
+                if segment_time is None and segment_idx is not None and segment_idx < len(segments_list):
+                    segment_time = segments_list[segment_idx].get("start", 0)
+                
+                if segment_time is None:
+                    segment_time = 0  # 備選：使用 0 秒
+                
+                # 原始截圖路徑
+                original_frame_path = frames_dir / f"recall_{recall_id}_original.png"
+                
+                # Step 2：提取幀
+                frame_result = frame_extractor.extract_frame_at_time(
+                    video_path,
+                    segment_time,
+                    str(original_frame_path)
+                )
+                
+                if not frame_result.get("success", True):
+                    # 提取失敗
+                    time_display = f"[0:{int(segment_time)//60:02d}:{int(segment_time)%60:02d}]"
+                    error_msg = frame_result.get('error', '未知錯誤')
+                    print(f"  ⚠ {time_display} 『{recall['recall_cue']}』 - 幀提取失敗")
+                    print(f"      ✗ {error_msg}")
+                    failed_count += 1
+                    continue
+                
+                # Step 3：ROI 偵測 + 裁切
+                cropped_frame_path = frames_dir / f"recall_{recall_id}_cropped.png"
+                
+                roi_result = roi_detector.detect_and_crop(
+                    str(original_frame_path),
+                    str(cropped_frame_path),
+                    recall_info=recall
+                )
+                
+                # Step 4：更新 Recall 記錄
+                recall["frames"] = {
+                    "original": f"frames/recall_{recall_id}_original.png",
+                    "cropped": f"frames/recall_{recall_id}_cropped.png"
+                }
+                
+                recall["roi"] = roi_result["roi"]
+                
+                # 格式化秒數為時間戳顯示
+                time_display = f"[0:{int(segment_time)//60:02d}:{int(segment_time)%60:02d}]"
+                original_rel_path = f"frames/recall_{recall_id}_original.png"
+                cropped_rel_path = f"frames/recall_{recall_id}_cropped.png"
+                print(f"  ✓ [{recall_id}] {time_display} 『{recall['recall_cue']}』")
+                print(f"      → 原始: {original_rel_path}")
+                print(f"      → 裁切: {cropped_rel_path}")
+                processed_count += 1
+            
+            except Exception as e:
+                # 異常時，嘗試從 recall 獲取時間信息
+                segment_start_seconds = recall.get('segment_start_seconds', 0)
+                time_display = f"[0:{int(segment_start_seconds)//60:02d}:{int(segment_start_seconds)%60:02d}]"
+                recall_cue = recall.get('recall_cue', '?')
+                error_brief = str(e)[:100]
+                print(f"  ✗ {time_display} 『{recall_cue}』 - 處理失敗")
+                print(f"      ✗ 錯誤: {error_brief}")
+                failed_count += 1
+        
+        print(f"\n[FusionEngine] Recall 幀生成完成")
+        print(f"  ✓ 成功: {processed_count}")
+        if failed_count > 0:
+            print(f"  ✗ 失敗: {failed_count}")
+        print(f"  📁 輸出目錄: {frames_dir.absolute()}")
+        
+        # 列舉已保存的文件
+        if frames_dir.exists():
+            saved_files = list(frames_dir.glob("*.png"))
+            if saved_files:
+                print(f"  📸 已保存 {len(saved_files)} 個截圖文件:")
+                for i, file in enumerate(sorted(saved_files), 1):
+                    file_size = file.stat().st_size / 1024  # KB
+                    print(f"      {i}. {file.name} ({file_size:.1f} KB)")
+        
+        return recall_data
 
 
 if __name__ == "__main__":

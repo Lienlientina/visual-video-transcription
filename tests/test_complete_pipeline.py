@@ -192,6 +192,28 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print(f"✗ 融合失敗: {e}")
         return
     
+    # ========== 步驟 5b: 生成 Recall 幀 ==========
+    print("\n" + "="*70)
+    print("【步驟5b】為每個 Recall 生成原始截圖和 ROI 裁切截圖")
+    print("="*70)
+    
+    try:
+        if recall_data.get("recalls") and len(recall_data["recalls"]) > 0:
+            # 為每個 recall 添加 recall_id（用於圖片命名）
+            for idx, recall in enumerate(recall_data["recalls"]):
+                recall["recall_id"] = idx
+            
+            # 生成截圖 + ROI 裁切
+            engine.generate_recall_frames(str(video_path), recall_data, fused_data)
+            
+            print(f"\n✓ Recall 幀生成完成")
+        else:
+            print(f"\n⊘ 無 Recall 紀錄，跳過幀生成")
+    except Exception as e:
+        print(f"⚠ Recall 幀生成失敗（非關鍵）: {e}")
+        import traceback
+        traceback.print_exc()
+    
     # ========== 輸出結果 ==========
     print("\n" + "="*70)
     print("【結果】保存融合逐字稿 + 字幕")

@@ -283,6 +283,84 @@ class FrameExtractor:
         frames_result["frames"] = frames_with_text
         
         return frames_result
+    
+    def extract_frame_at_time(self, video_path: str, seconds: float, output_path: str, 
+                             output_quality: int = 2) -> Dict:
+        """
+        在指定秒數處截取單個幀
+        
+        用途：為單個 Recall 或其他目的快速截取一幀
+        
+        Args:
+            video_path (str): 影片檔路徑
+            seconds (float): 秒數（例如 45.2）
+            output_path (str): 輸出檔案路徑
+            output_quality (int): 圖片質量 (1-5，越高越好)
+        
+        Returns:
+            dict:
+                {
+                    "success": True/False,
+                    "seconds": 45.2,
+                    "path": "outputs/results/frames/recall_0_original.png",
+                    "error": "..."  (if success=False)
+                }
+        """
+        try:
+            video_path = Path(video_path)
+            output_path = Path(output_path)
+            
+            if not video_path.exists():
+                return {
+                    "success": False,
+                    "seconds": seconds,
+                    "path": str(output_path),
+                    "error": f"影片檔不存在: {video_path}"
+                }
+            
+            # 確保輸出目錄存在
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # 使用 ffmpeg 截幀
+            cmd = [
+                "ffmpeg",
+                "-ss", str(seconds),
+                "-i", str(video_path),
+                "-vframes", "1",
+                "-q:v", str(output_quality),
+                "-y",
+                str(output_path)
+            ]
+            
+            # 執行 ffmpeg，隱藏輸出
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "seconds": seconds,
+                    "path": str(output_path),
+                    "error": f"ffmpeg 錯誤: {result.stderr[:100]}"
+                }
+            
+            return {
+                "success": True,
+                "seconds": seconds,
+                "path": str(output_path)
+            }
+        
+        except Exception as e:
+            return {
+                "success": False,
+                "seconds": seconds,
+                "path": str(output_path),
+                "error": str(e)
+            }
 
 
 if __name__ == "__main__":
