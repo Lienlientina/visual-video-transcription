@@ -27,9 +27,8 @@
 【步驟4.5】回想檢測 (Recall Detection)
   • 純 LLM 語義分析（Gemini 3.1 Flash Lite）
   ↓
-【步驟5b】回想截圖提取 + ROI 裁切 (NEW)
-  • Vision API ROI 偵測（若有 API key）
-  • 失敗時直接輸出完整圖片
+【步驟5b】回想截圖提取 + ROI 裁切
+  • Vision API ROI 偵測 (失敗時直接輸出完整圖片)
   • 保存原始截圖 + 裁切版本
   ↓
 【步驟5】補充式融合 + 句子合併 (保留原文)
@@ -139,12 +138,16 @@ outputs/
 ├── transcripts/
 │   └── <video_name>.json          # 原始逐字稿（時間戳+文字+語言+精確秒數）
 ├── frames/
-│   └── <video_name>_MM_SS_precise_X_XX.jpg  # 精確秒數截幀
+│   └── <video_name>_MM_SS_precise_X_XX.jpg           # 指示詞截幀
 └── results/
+    ├── frames/
+    │   ├── <video_name>_recall_<id>_original.png     # Recall 原始截圖（完整圖片）
+    │   └── <video_name>_recall_<id>_cropped.png      # Recall 裁切圖片（ROI 檢測後的相關區域）
     ├── <video_name>.txt            # 融合後的可讀逐字稿
-    ├── <video_name>_fusion.json    # 融合詳細數據
-    └── <video_name>.srt            # SRT caption file (turn on/off in player)
+    ├── <video_name>_fusion.json    # 融合詳細數據（包括 Recall 標注）
+    └── <video_name>.srt            # SRT caption file
 ```
+
 ### 🎞️ 使用字幕
 
 生成的 `.srt` 檔案可與影片搭配：
@@ -377,10 +380,10 @@ Response: YES → 需要視覺分析
   - 已能將回想標注融合到輸出（JSON/TXT/SRT）
   - 融合到逐字稿中
 
-
-- [ ] 智能截圖相關內容
-  - 提取回想內容對應的幀
-  - 只截圖相關部分（剔除無關背景）
+- [x] 智能截圖相關內容
+  - ✅ Recall frame 提取時間修復：使用被回想段落的時間而非 trigger segment start
+  - ✅ ROI 偵測 Prompt 增強：包含 trigger text、recall text 的完整上下文
+  - ✅ 錯誤處理改進：顯示實際 API 錯誤信息
 
 - [ ] 字幕+圖片鑲嵌回影片
   - 使用 FFmpeg overlay 或 OpenCV
@@ -476,8 +479,15 @@ result = fusion.fuse(transcript, analyses)
 ---
 ## Version History
 
+### v1.2.3 (2026-05-31)
+  - ✅ **Recall Frame 時間修復**：使用被回想段落及內容的畫面而非 trigger segment time
+  - ✅ **ROI 偵測 Prompt 增強**：Vision API 現包含完整語境
+    - 包含：trigger_cue（觸發詞）+ trigger_text（觸發句子）+ recalled_text（被回想內容）
+    - 提高 ROI 偵測精度，減少截圖內容重複或錯誤
+  - ✅ **錯誤處理改進**：Vision API 失敗時顯示實際錯誤信息
+
 ### v1.2.2 (2026-05-26)
-  - ✅ ROI 偵測系統改進：Vision API 優先 → 完整圖片備選（移除啟發式方法）
+  - ✅ ROI 偵測系統改進：Vision API 優先 → 完整圖片備選
   - ✅ Recall 截圖生成：為每個 Recall 自動提取幀 + 裁切
   - ✅ 終端輸出改進：顯示時間戳+觸發詞+檔案路徑
   - ✅ 支援 PPT/圖片/彩色背景內容

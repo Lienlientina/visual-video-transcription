@@ -6,19 +6,19 @@ from pathlib import Path
 from typing import Dict
 import google.generativeai as genai
 
-from config import GEMINI_API_KEY, GEMINI_MODEL
+from config import GEMINI_API_KEY, VISION_ANALYSIS_MODEL
 from utils import build_prompt_for_vision
 
 
 class VisionAnalyzer:
     """畫面理解類 - 使用 Gemini API"""
     
-    def __init__(self, model_name: str = GEMINI_MODEL):
+    def __init__(self, model_name: str = VISION_ANALYSIS_MODEL):
         """
         初始化視覺分析器
         
         Args:
-            model_name (str): Gemini 模型名稱，預設為 GEMINI_MODEL
+            model_name (str): Gemini 模型名稱，預設為 VISION_ANALYSIS_MODEL
         """
         if not GEMINI_API_KEY:
             raise RuntimeError(

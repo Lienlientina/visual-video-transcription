@@ -3,7 +3,7 @@ ROI 偵測器 - 自動識別並裁切關鍵區域
 支援 Vision API（可選）+ 全圖備選
 
 流程：
-  1. 嘗試 Vision API（如果可用）
+  1. 嘗試 Vision API（如果可用，支援 Rate Limit 重試）
   2. 失敗 → 返回全圖
   
 所有情況下都返回有效的 ROI 坐標
@@ -11,6 +11,7 @@ ROI 偵測器 - 自動識別並裁切關鍵區域
 
 import cv2
 import numpy as np
+import time
 from pathlib import Path
 
 
@@ -23,23 +24,26 @@ class ROIDetector:
     - 層級 2：全圖備選（保證有輸出）
     """
     
-    def __init__(self, use_vision_api=False, vision_api_key=None, verbose=True):
+    def __init__(self, use_vision_api=False, vision_api_key=None, vision_model=None, verbose=True):
         """
         初始化 ROI 偵測器
         
         Args:
             use_vision_api (bool): 是否嘗試使用 Vision API
             vision_api_key (str): Gemini Vision API key（可選）
+            vision_model (str): Gemini Vision 模型名稱（例如 gemini-2.5-flash-preview）
             verbose (bool): 是否在終端打印偵測方法
         """
         self.use_vision_api = use_vision_api
         self.vision_api_key = vision_api_key
+        self.vision_model = vision_model
         self.verbose = verbose
         self.last_method = None
     
     def detect_roi_with_vision_api(self, image_path, recall_info=None):
         """
         使用 Gemini Vision API 偵測 ROI
+        支援 Rate Limit 重試機制
         
         Args:
             image_path (str): 圖片路徑
@@ -51,127 +55,110 @@ class ROIDetector:
         if not self.use_vision_api:
             return None
         
-        try:
-            import google.generativeai as genai
-            
-            if not self.vision_api_key:
-                # 嘗試從環境變數讀取
-                import os
-                api_key = os.getenv("GEMINI_API_KEY")
-                if not api_key:
-                    return None
-            else:
-                api_key = self.vision_api_key
-            
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash-preview")
-            
-            # 讀取圖片
-            with open(image_path, "rb") as f:
-                image_data = f.read()
-            
-            # 組織 prompt
-            trigger_word = recall_info.get("recall_cue", "content") if recall_info else "content"
-            prompt = f"""
-請分析此圖片，找出關鍵區域（ROI）。
-觸發詞："{trigger_word}"
-請返回矩形框的相對坐標（0-1 範圍）：
-格式：x_ratio, y_ratio, width_ratio, height_ratio
-
-只返回四個數字，以逗號分隔，例如：0.1,0.2,0.8,0.6
-"""
-            
-            # 調用 API
-            response = model.generate_content([
-                prompt,
-                {"mime_type": "image/jpeg", "data": image_data}
-            ])
-            
-            # 解析回應
-            result_text = response.text.strip()
-            coords = [float(x) for x in result_text.split(",")]
-            
-            if len(coords) == 4 and all(0 <= c <= 1 for c in coords):
-                return {
-                    "x_ratio": coords[0],
-                    "y_ratio": coords[1],
-                    "width_ratio": coords[2],
-                    "height_ratio": coords[3],
-                    "description": f"AI 偵測區域 ({trigger_word})"
-                }
+        max_retries = 1
+        retry_count = 0
         
-        except Exception as e:
-            if self.verbose:
-                pass  # 靜默失敗，稍後在降級中說明
+        while retry_count < max_retries:
+            try:
+                import google.generativeai as genai
+                
+                if not self.vision_api_key:
+                    # 嘗試從環境變數讀取
+                    import os
+                    api_key = os.getenv("GEMINI_API_KEY")
+                    if not api_key:
+                        if self.verbose:
+                            print(f"  ✗ Vision API: 未找到 API key")
+                        return None
+                else:
+                    api_key = self.vision_api_key
+                
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel(self.vision_model)
+                
+                # 讀取圖片
+                with open(image_path, "rb") as f:
+                    image_data = f.read()
+                
+                # 組織 prompt
+                # ← 改：加入完整的上下文信息
+                trigger_cue = recall_info.get("recall_cue", "") if recall_info else ""
+                trigger_text = recall_info.get("trigger_text", "") if recall_info else ""
+                recalled_text = recall_info.get("recalled_text", "") if recall_info else ""
+                
+                prompt = f"""【影片 ROI 偵測】
+
+                觸發詞彙："{trigger_cue}"
+
+                觸發時刻的文本內容：
+                "{trigger_text}"
+
+                被回憶的概念完整文本：
+                "{recalled_text}"
+
+                任務：根據上述背景，在此圖片中找出關鍵區域（ROI）。
+
+                指導原則：
+                - 優先找出公式、方程式、定理、圖表、圖示說明、code、重要文字等
+                - 保持截圖專注在單一重點，避免同時包含多個元素(只公式或只圖片或只樹狀圖...等)
+                - 公式或樹狀圖部分應完整截圖，盡量避免只截取部分內容
+                - 盡量避免邊框、光標、空白區、UI元素
+
+                請返回矩形框的相對坐標（0-1 範圍）：
+                格式：x_ratio, y_ratio, width_ratio, height_ratio
+
+                只返回四個數字，以逗號分隔，例如：0.1,0.2,0.8,0.6
+                """
+                
+                # 調用 API
+                response = model.generate_content([
+                    prompt,
+                    {"mime_type": "image/jpeg", "data": image_data}
+                ])
+                
+                # 解析回應
+                result_text = response.text.strip()
+                coords = [float(x) for x in result_text.split(",")]
+                
+                if len(coords) == 4 and all(0 <= c <= 1 for c in coords):
+                    return {
+                        "x_ratio": coords[0],
+                        "y_ratio": coords[1],
+                        "width_ratio": coords[2],
+                        "height_ratio": coords[3],
+                        "description": f"AI 偵測區域 ({trigger_cue})"
+                    }
+                else:
+                    if self.verbose:
+                        print(f"  ✗ Vision API 回應格式錯誤: {result_text[:50]}")
+                    return None
+            
+            except Exception as e:
+                error_msg = str(e).lower()
+                
+                # 檢查是否為 Rate Limit 錯誤
+                is_rate_limit = ("rate limit" in error_msg or 
+                                "quota" in error_msg or 
+                                "429" in error_msg or
+                                "too many requests" in error_msg or
+                                "resource exhausted" in error_msg)
+                
+                if is_rate_limit and retry_count < max_retries - 1:
+                    # Rate Limit 錯誤：等待後重試
+                    retry_count += 1
+                    wait_time = 60
+                    if self.verbose:
+                        print(f"  ⚠ Vision API Rate Limit，等待 {wait_time} 秒後重試... ({retry_count}/{max_retries-1})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    # 其他錯誤或達到重試次數上限
+                    if self.verbose:
+                        error_brief = str(e)[:80]
+                        print(f"  ✗ Vision API 失敗: {error_brief}")
+                    return None
         
         return None
-    
-    def detect_roi_simple(self, image_path):
-        """
-        啟發式 ROI 偵測 - 找圖片中最大的內容塊
-        
-        原理：
-          1. 圖像二值化（轉黑白）
-          2. 輪廓檢測
-          3. 找最大的連通塊
-          4. 返回外包矩形
-        
-        適用場景：講座、黑板、螢幕截圖
-        
-        Args:
-            image_path (str): 圖片路徑
-        
-        Returns:
-            dict: ROI 坐標（總是有效的）
-        """
-        try:
-            # 讀取圖片
-            img = cv2.imread(image_path)
-            if img is None:
-                return self._get_fallback_roi("圖片讀取失敗")
-            
-            height, width = img.shape[:2]
-            
-            # 轉灰度
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            
-            # 二值化 - 找黑色區域（反轉）
-            # 閾值設為 127，低於 127 的像素變成白色（內容），高於的變成黑色（背景）
-            _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
-            
-            # 輪廓檢測
-            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if not contours:
-                return self._get_fallback_roi("未找到任何內容塊")
-            
-            # 找最大的輪廓
-            largest_contour = max(contours, key=cv2.contourArea)
-            area = cv2.contourArea(largest_contour)
-            
-            # 如果最大塊太小（面積 < 圖片面積的 5%），可能是噪音
-            if area < (height * width * 0.05):
-                return self._get_fallback_roi("最大內容塊太小，可能為噪音")
-            
-            # 外包矩形
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            
-            # 轉為相對坐標（0-1）
-            x_ratio = max(0, min(1, x / width))
-            y_ratio = max(0, min(1, y / height))
-            width_ratio = max(0, min(1, w / width))
-            height_ratio = max(0, min(1, h / height))
-            
-            return {
-                "x_ratio": x_ratio,
-                "y_ratio": y_ratio,
-                "width_ratio": width_ratio,
-                "height_ratio": height_ratio,
-                "description": f"啟發式偵測 (最大塊面積: {area:.0f}px²)"
-            }
-        
-        except Exception as e:
-            return self._get_fallback_roi(f"啟發式偵測失敗: {str(e)[:50]}")
     
     def _get_fallback_roi(self, reason=""):
         """
@@ -320,28 +307,5 @@ class ROIDetector:
             }
 
 
-def test_roi_detector():
-    """
-    簡單的測試函數（用於開發調試）
-    """
-    detector = ROIDetector(verbose=True)
-    
-    # 測試圖片路徑（需要實際存在的圖片）
-    test_image = "outputs/results/frames/test.png"
-    
-    if Path(test_image).exists():
-        roi = detector.detect_roi_with_fallback(test_image)
-        print(f"\n偵測結果: {roi}")
-        
-        # 嘗試裁切
-        result = detector.detect_and_crop(
-            test_image,
-            "outputs/results/frames/test_cropped.png"
-        )
-        print(f"裁切結果: {result}")
-    else:
-        print(f"測試圖片不存在: {test_image}")
-
-
 if __name__ == "__main__":
-    test_roi_detector()
+    pass

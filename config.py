@@ -14,11 +14,11 @@ WHISPER_MODEL = "base"  # faster-whisper 模型尺寸: tiny, base, small, medium
 # ============ Gemini API ============
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-3.1-flash-lite"  # 視覺分析模型
 
-# 指示詞判斷和視覺分析都用同一模型
-DEICTIC_DECISION_MODEL = "gemini-3.1-flash-lite"  # 第二層：判斷是否需要視覺
-VISION_ANALYSIS_MODEL = "gemini-3.1-flash-lite"    # 第三層：分析視覺內容
+DEICTIC_DECISION_MODEL = "gemini-3.1-flash-lite"  # 第二層：判斷指示詞是否需要視覺
+VISION_ANALYSIS_MODEL = "gemini-3.1-flash-lite"   # Deictic 內容的視覺分析
+ROI_VISION_MODEL = "gemini-2.5-flash-image"       # ROI 偵測使用的視覺模型（試試看能否輸出圖片）
+USE_ROI_VISION_API = True                         # ← 新增：是否使用 ROI Vision API（True=啟用，False=使用全圖）
 
 # ============ 路徑配置 ============
 BASE_DIR = Path(__file__).parent

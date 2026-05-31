@@ -295,8 +295,10 @@ Output ONLY valid JSON (no other text):
                         "recall_type": recall.get("recall_type", "direct"),
                         "recall_cue": str(recall.get("recall_cue", "")),
                         "current_text": str(recall.get("current_text", "")),
+                        "trigger_text": str(recall.get("current_text", "")),
                         "recalled_segment_idx": rec_seg_idx,
                         "recalled_text": str(recall.get("recalled_text", "")),
+                        "recalled_end_time": segments[rec_seg_idx].get("end", 0),
                         "position_in_segment_ratio": ratio,
                         "confidence": confidence,
                         "reasoning": str(recall.get("reasoning", ""))

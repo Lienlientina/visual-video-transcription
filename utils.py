@@ -2,6 +2,7 @@
 通用工具函數 - 時間轉換、指示詞偵測等
 """
 import re
+import time
 from config import (
     DEICTIC_WORDS_MAP, SKIP_PATTERNS_MAP,
     DEICTIC_DECISION_MODEL, GEMINI_API_KEY,
@@ -33,13 +34,11 @@ def check_skip_pattern(sentence, deictic_word, language="zh"):
     return False
 
 
-# ← 新增：緩存指示詞判斷結果，避免重複調用 API
-_VISION_DECISION_CACHE = {}
-
 def ask_vision_decision(deictic_word, context_before, context_after, language="zh"):
     """
     第二層：輕量 AI 判斷
     用 Gemini Flash 判斷指示詞是否指代畫面內容
+    支援 Rate Limit 重試機制：失敗時等待 60 秒後重試（最多 3 次）
     
     Args:
         deictic_word (str): 指示詞
@@ -50,50 +49,65 @@ def ask_vision_decision(deictic_word, context_before, context_after, language="z
     Returns:
         bool: True 需要視覺，False 不需要
     """
-    # ← 新增：檢查緩存
-    cache_key = (deictic_word, language)
-    if cache_key in _VISION_DECISION_CACHE:
-        return _VISION_DECISION_CACHE[cache_key]
+    max_retries = 3
+    retry_count = 0
     
-    try:
-        import google.generativeai as genai
-        
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(DEICTIC_DECISION_MODEL)
-        
-        full_context = f"{context_before}{deictic_word}{context_after}"
-        
-        if language == "zh":
-            prompt = f"""在這個句子中：「{full_context}」
+    while retry_count < max_retries:
+        try:
+            import google.generativeai as genai
+            
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel(DEICTIC_DECISION_MODEL)
+            
+            full_context = f"{context_before}{deictic_word}{context_after}"
+            
+            if language == "zh":
+                prompt = f"""在這個句子中：「{full_context}」
 
             「{deictic_word}」是指畫面上的具體物體/位置，還是語言上的概念/抽象參考？
 
             只回答「畫面」或「概念」："""
-        else:  # English
-            prompt = f"""In this sentence: "{full_context}"
+            else:  # English
+                prompt = f"""In this sentence: "{full_context}"
 
             Does "{deictic_word}" refer to something visible on screen/in the image, or is it an abstract concept?
 
             Answer only "visual" or "abstract":"""
+            
+            response = model.generate_content(prompt)
+            answer = response.text.strip().lower()
+            
+            # 檢查回答
+            if language == "zh":
+                result = "畫面" in answer
+            else:
+                result = "visual" in answer
+            
+            return result
         
-        response = model.generate_content(prompt)
-        answer = response.text.strip().lower()
-        
-        # 檢查回答
-        if language == "zh":
-            result = "畫面" in answer
-        else:
-            result = "visual" in answer
-        
-        # ← 新增：儲存到緩存
-        _VISION_DECISION_CACHE[cache_key] = result
-        return result
-    
-    except Exception as e:
-        print(f"[Warning] 判斷指示詞『{deictic_word}』失敗: {e}")
-        # ← 新增：失敗時也緩存結果（預設 False），避免重複出錯
-        _VISION_DECISION_CACHE[cache_key] = False
-        return False
+        except Exception as e:
+            error_msg = str(e).lower()
+            
+            # 檢查是否為 Rate Limit 錯誤
+            is_rate_limit = ("rate limit" in error_msg or 
+                            "quota" in error_msg or 
+                            "429" in error_msg or
+                            "too many requests" in error_msg)
+            
+            if is_rate_limit and retry_count < max_retries - 1:
+                # Rate Limit 錯誤：等待後重試
+                retry_count += 1
+                wait_time = 60
+                print(f"[⚠ Rate Limit] 指示詞『{deictic_word}』觸發限流，等待 {wait_time} 秒後重試... (嘗試 {retry_count}/{max_retries-1})")
+                time.sleep(wait_time)
+                continue
+            else:
+                # 其他錯誤或達到重試次數上限
+                if is_rate_limit:
+                    print(f"[✗ Rate Limit] 指示詞『{deictic_word}』重試失敗，已達到重試次數上限，改為不需視覺")
+                else:
+                    print(f"[Warning] 判斷指示詞『{deictic_word}』失敗: {e}")
+                return False
 
 
 def decide_vision_needed(deictic_word, context_before, context_after, language="zh"):

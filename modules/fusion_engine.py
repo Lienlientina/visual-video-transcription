@@ -427,17 +427,26 @@ class FusionEngine:
         """
         from modules.roi_detector import ROIDetector
         from modules.frame_extractor import FrameExtractor
+        from config import GEMINI_API_KEY, ROI_VISION_MODEL, USE_ROI_VISION_API
         
         print("\n[FusionEngine] 開始生成 Recall 幀...")
         
-        roi_detector = ROIDetector(use_vision_api=False, verbose=True)
+        # ← 改：從 config 讀取配置，啟用或禁用 ROI Vision API
+        roi_detector = ROIDetector(
+            use_vision_api=USE_ROI_VISION_API,
+            vision_api_key=GEMINI_API_KEY,
+            vision_model=ROI_VISION_MODEL,
+            verbose=True
+        )
         frame_extractor = FrameExtractor()
         
         # 確保輸出目錄存在
         frames_dir = RESULTS_DIR / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
         
-        # 獲取 segments 清單（用於提取時間信息）
+        video_name = Path(video_path).stem  # 例如 "video_demo1" 而非 "video_demo1.mp4"
+        
+        # 獲取 segments list
         segments_list = fused_data.get("segments", []) if fused_data else []
         
         processed_count = 0
@@ -451,14 +460,23 @@ class FusionEngine:
                 # Step 1：取得該 Recall 時刻的幀
                 segment_time = recall.get("segment_start_seconds")
                 
-                if segment_time is None and segment_idx is not None and segment_idx < len(segments_list):
+                # ← 新增：從 recall_data 中直接獲得 recalled_end_time
+                if "recalled_end_time" in recall:
+                    segment_time = recall.get("recalled_end_time")
+                elif "recalled_segment_idx" in recall:
+                    # 從 segments_list 中計算
+                    recalled_segment_idx = recall.get("recalled_segment_idx")
+                    if recalled_segment_idx is not None and recalled_segment_idx < len(segments_list):
+                        segment_time = segments_list[recalled_segment_idx].get("end", 0)
+                elif segment_time is None and segment_idx is not None and segment_idx < len(segments_list):
+                    # 備選：如果 recall 中沒有 segment_start_seconds，則嘗試從 segments_list 中獲取 start 時間
                     segment_time = segments_list[segment_idx].get("start", 0)
                 
                 if segment_time is None:
                     segment_time = 0  # 備選：使用 0 秒
                 
-                # 原始截圖路徑
-                original_frame_path = frames_dir / f"recall_{recall_id}_original.png"
+                # 原始截圖路徑加上 video_name 前綴
+                original_frame_path = frames_dir / f"{video_name}_recall_{recall_id}_original.png"
                 
                 # Step 2：提取幀
                 frame_result = frame_extractor.extract_frame_at_time(
@@ -476,8 +494,8 @@ class FusionEngine:
                     failed_count += 1
                     continue
                 
-                # Step 3：ROI 偵測 + 裁切
-                cropped_frame_path = frames_dir / f"recall_{recall_id}_cropped.png"
+                # Step 3：ROI 偵測 + 裁切 ← 改：加上 video_name 前綴
+                cropped_frame_path = frames_dir / f"{video_name}_recall_{recall_id}_cropped.png"
                 
                 roi_result = roi_detector.detect_and_crop(
                     str(original_frame_path),
@@ -485,18 +503,18 @@ class FusionEngine:
                     recall_info=recall
                 )
                 
-                # Step 4：更新 Recall 記錄
+                # Step 4：更新 Recall 記錄 ← 改：加上 video_name 前綴
                 recall["frames"] = {
-                    "original": f"frames/recall_{recall_id}_original.png",
-                    "cropped": f"frames/recall_{recall_id}_cropped.png"
+                    "original": f"frames/{video_name}_recall_{recall_id}_original.png",
+                    "cropped": f"frames/{video_name}_recall_{recall_id}_cropped.png"
                 }
                 
                 recall["roi"] = roi_result["roi"]
                 
-                # 格式化秒數為時間戳顯示
+                # 格式化秒數為時間戳顯示 ← 改：加上 video_name 前綴
                 time_display = f"[0:{int(segment_time)//60:02d}:{int(segment_time)%60:02d}]"
-                original_rel_path = f"frames/recall_{recall_id}_original.png"
-                cropped_rel_path = f"frames/recall_{recall_id}_cropped.png"
+                original_rel_path = f"frames/{video_name}_recall_{recall_id}_original.png"
+                cropped_rel_path = f"frames/{video_name}_recall_{recall_id}_cropped.png"
                 print(f"  ✓ [{recall_id}] {time_display} 『{recall['recall_cue']}』")
                 print(f"      → 原始: {original_rel_path}")
                 print(f"      → 裁切: {cropped_rel_path}")
