@@ -15,6 +15,7 @@ from modules.frame_extractor import FrameExtractor
 from modules.vision_analyzer import VisionAnalyzer
 from modules.recall_detector import RecallDetector
 from modules.fusion_engine import FusionEngine
+from modules.final_json_generator import FinalJsonGenerator
 
 
 def run_complete_pipeline(video_path, transcript_json_path=None):
@@ -206,6 +207,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
             # 生成截圖 + ROI 裁切
             engine.generate_recall_frames(str(video_path), recall_data, fused_data)
             
+            # ← 關鍵：將更新後的 recall_data 寫回 fused_data
+            fused_data["recalls"] = recall_data.get("recalls", [])
+            
             print(f"\n✓ Recall 幀生成完成")
         else:
             print(f"\n⊘ 無 Recall 紀錄，跳過幀生成")
@@ -216,7 +220,7 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     
     # ========== 輸出結果 ==========
     print("\n" + "="*70)
-    print("【結果】保存融合逐字稿 + 字幕")
+    print("【步驟6】保存融合逐字稿 + 字幕")
     print("="*70)
     
     try:
@@ -231,6 +235,40 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     except Exception as e:
         print(f"✗ 保存失敗: {e}")
         return
+    
+    # ========== 步驟 6b: 生成 Final JSON（供播放器使用）==========
+    print("\n" + "="*70)
+    print("【步驟6b】生成 Final JSON - 為 Web 播放器提供數據")
+    print("="*70)
+    
+    try:
+        from config import RESULTS_DIR
+        
+        fusion_json_path = RESULTS_DIR / f"{output_base}_fusion.json"
+        
+        generator = FinalJsonGenerator(verbose=True)
+        final_json_path = generator.generate(
+            video_name=output_base,
+            fusion_json_path=str(fusion_json_path),
+            video_path=str(video_path),
+            output_dir=str(RESULTS_DIR)
+        )
+        
+        if final_json_path:
+            print(f"\n✓ Final JSON 已生成")
+            print(f"  - 輸出路徑: {final_json_path}")
+            print(f"\n  播放器使用方式：")
+            print(f"  - 用瀏覽器開啟: file:///<path>/web/player.html?json=../outputs/results/{output_base}_final.json")
+            print(f"  - 或啟動 HTTP 服務器:")
+            print(f"    cd web")
+            print(f"    python -m http.server 8000")
+            print(f"    然後訪問: http://localhost:8000/player.html?json=../outputs/results/{output_base}_final.json")
+        else:
+            print(f"\n⚠ Final JSON 生成失敗")
+    except Exception as e:
+        print(f"⚠ Final JSON 生成失敗（非關鍵）: {e}")
+        import traceback
+        traceback.print_exc()
     
     # ========== 顯示樣本結果 ==========
     print("\n" + "="*70)
@@ -252,6 +290,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     
     print("=" * 70)
     print("✓ 完整流程執行完成！")
+    print("  - 已生成 fusion.json（原始數據）")
+    print("  - 已生成 final.json（播放器數據）")
+    print("  - 已生成 player.html 可用的影片 + 字幕 + recall frames")
     print("=" * 70)
 
 

@@ -8,7 +8,7 @@
 
 ## 🎯 功能概述
 
-### 完整管線（5 個集成模塊）
+### 完整 Pipeline
 
 ```
 影片 
@@ -24,16 +24,25 @@
   ↓
 【步驟4】視覺分析 (Gemini 3.1 Flash Lite)
   ↓
-【步驟4.5】回想檢測 (Recall Detection)
+【步驟5】回想檢測 (Recall Detection)
   • 純 LLM 語義分析（Gemini 3.1 Flash Lite）
   ↓
 【步驟5b】回想截圖提取 + ROI 裁切
   • Vision API ROI 偵測 (失敗時直接輸出完整圖片)
   • 保存原始截圖 + 裁切版本
   ↓
-【步驟5】補充式融合 + 句子合併 (保留原文)
+【步驟6】補充式融合 + 句子合併 (保留原文)
   ↓
-融合逐字稿 + JSON 詳細數據 + 可讀性優化
+【步驟7】產生字幕文件 (SRT 格式)
+  ↓
+【步驟8】生成播放器 JSON (Final JSON)
+  • 提取 segments + recalls
+  • 驗證必要字段
+  • 調整路徑為相對路徑（相對於 web/player.html）
+  ↓
+Web Player 播放
+  • 單一 .html
+  • recall frame
 ```
 
 ### 核心功能
@@ -44,8 +53,12 @@
 | **DeicticDetector** | 多語言指示詞檢測 + 三層智能過濾 | ✅ 完成 |
 | **FrameExtractor** | 精確秒數截幀（±0.1秒） | ✅ 完成 |
 | **VisionAnalyzer** | Gemini 3.1 Flash Lite 視覺分析 | ✅ 完成 |
+| **RecallDetector** | recall 偵測 (direct, contrast) | ✅ 完成 |
 | **FusionEngine** | 補充式融合 + 句子合併 | ✅ 完成 |
-| **ROIDetector** | Recall 截圖 ROI 偵測 + 裁切 | ✅ 完成 |
+| **ROIDetector** | recall 截圖 ROI 偵測 + 裁切 | ✅ 完成 |
+| **SubtitleConverter** | .srt 字幕生成 | ✅ 完成 |
+| **FinalJsonGenerator** | player JSON 生成 | ✅ 完成 |
+| **Web Player** | player with recall frame | ✅ 完成 |
 
 ---
 
@@ -145,10 +158,13 @@ outputs/
     │   └── <video_name>_recall_<id>_cropped.png      # Recall 裁切圖片（ROI 檢測後的相關區域）
     ├── <video_name>.txt            # 融合後的可讀逐字稿
     ├── <video_name>_fusion.json    # 融合詳細數據（包括 Recall 標注）
+    ├── <video_name>_final.json     # 播放器 JSON
     └── <video_name>.srt            # SRT caption file
 ```
 
-### 🎞️ 使用字幕
+### 🎞️ 使用字幕和 player
+
+#### 字幕用法
 
 生成的 `.srt` 檔案可與影片搭配：
 
@@ -166,6 +182,22 @@ outputs/
 - YouTube（上傳為內嵌字幕）
 - OBS（直播用）
 - Shotcut、DaVinci Resolve（剪輯用）
+
+#### 🆕 Web 播放器用法
+
+使用 `web/player.html`：
+
+**啟動 HTTP 服務器**
+```bash
+cd "your_project_path"
+python -m http.server 8000
+```
+
+**在瀏覽器打開**
+```
+http://localhost:8000/web/player.html?json=outputs/results/<video_name>_final.json
+```
+
 ---
 
 ## 📁 項目結構
@@ -200,8 +232,16 @@ visual-video-transcription/
 │   │   └── FusionEngine class: fuse(), generate_recall_frames()
 │   ├── roi_detector.py            # Recall 截圖 ROI 偵測與裁切
 │   │   └── ROIDetector class: detect_and_crop()
-│   └── subtitle_converter.py      # Generate SRT caption
-│       └── SubtitleConverter class: fused_json_to_srt()
+│   ├── subtitle_converter.py      # Generate SRT caption
+│   │   └── SubtitleConverter class: fused_json_to_srt()
+│   └── final_json_generator.py    # 播放器優化 JSON 生成
+│       └── FinalJsonGenerator class: generate()
+│
+├── web/                           # Web player
+│   └── player.html                # 單一 .html
+│       • 7:3 Flex 布局 (70% 視頻 + 30% 回想)
+│       • 自動時間同步 + 字幕顯示
+│       • 自動消失 + 淡出動畫
 │
 ├── tests/
 │   ├── README_tests.md            # 測試使用說明
@@ -216,7 +256,7 @@ visual-video-transcription/
 ├── outputs/                       # （不上傳 Git）
 │   ├── transcripts/               # 原始逐字稿
 │   ├── frames/                    # 截幀
-│   └── results/                   # 融合結果
+│   └── results/                   # 融合結果 + final.json
 │
 └── demo_video/                    # （不上傳 Git）
     └── <sample_video.mp4>
@@ -312,6 +352,98 @@ Response: YES → 需要視覺分析
 
 ---
 
+## 🆕 Web Player 和 Final JSON
+
+### Final JSON 結構
+
+`final.json` 是為 Web Player 優化的簡化 JSON 格式：
+
+```json
+{
+  "video_name": "video_demo1",
+  "video_path": "../demo_video/video_demo1.mp4",
+  "subtitle_path": "../outputs/results/video_demo1.srt",
+  "total_segments": 6,
+  "total_recalls": 2,
+  "segments": [
+    {
+      "segment_idx": 0,
+      "start": 0.37,
+      "end": 14.53,
+      "text": "各位同學好，這一節我們要介紹多變數函數偏微分的連鎖律...",
+      "time": "[0:00:00]"
+    }
+  ],
+  "recalls": [
+    {
+      "segment_idx": 3,
+      "precise_time_seconds": 52.58,
+      "recall_cue": "根據單變數函數的連鎖律",
+      "recalled_text": "各位同學好，這一節我們要介紹...",
+      "recall_type": "direct",
+      "confidence": 0.95,
+      "frame_original": "../../outputs/results/frames/video_demo1_recall_0_original.png",
+      "frame_cropped": "../../outputs/results/frames/video_demo1_recall_0_cropped.png"
+    }
+  ]
+}
+```
+
+**關鍵特性：**
+- ✅ 相對路徑（基於 `web/player.html`）
+- ✅ 簡化 text（僅包含 player 需要的資訊）
+- ✅ 時間精確性（`precise_time_seconds` 用於同步）
+- ✅ 多 recall 支持（自動排序 + 堆疊管理）
+
+### Web Player 工作流程
+
+```
+1. 用戶在瀏覽器打開 player.html，指定 ?json=path/to/final.json
+   ↓
+2. JavaScript 加載 final.json
+   ↓
+3. player 初始化
+   • 設置影片來源
+   • 添加 caption 軌道
+   • 準備 recall container
+   ↓
+4. 影片播放（100ms 檢查一次）
+   • timeupdate 事件觸發
+   • 檢查當前時間是否有回想
+   ↓
+5. 回想顯示邏輯
+   • 找到當前時間 ±0.5s 的回想
+   • 新回想立即顯示並計時（時間到自動消失）
+   • 舊回想自動淡出（150ms 動畫）
+   ↓
+6. 字幕同步
+   • 根據當前時間找到對應 segment
+   • 實時更新字幕區域
+```
+
+### Web Player 佈局
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  影片標題                                    回想內容     │
+├───────────────────────────────────┬──────────────────────┤
+│                                   │  回想框 1             │
+│        影片播放區 (70%)           │  ┌──────────────────┐ │
+│        保持原始 16:9 比例          │  │ [影片/文字]       │ │
+│                                   │  │ 信心: 95%        │ │
+│                                   │  └──────────────────┘ │
+│                                   │  回想框 2             │
+│                                   │  ┌──────────────────┐ │
+│                                   │  │ [影片/文字]       │ │
+│                                   │  │ 信心: 90%        │ │
+│                                   │  └──────────────────┘ │
+├───────────────────────────────────┼──────────────────────┤
+│  字幕區 (同寬影片)                 │ 回想邊欄 (30%)     │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## 三層過濾系統詳解
 
 為提高效率，系統採用漸進式過濾策略，避免對所有指示詞進行完整視覺分析
@@ -368,6 +500,11 @@ Response: YES → 需要視覺分析
 - [x] 有效分段 / 句子合併優化 — 修復語言偵測誤判
 - [x] Recall 截圖提取 + ROI 裁切 — Vision API + 完整圖片備選
 - [x] 並行截圖生成 — 為每個 Recall 生成原始+裁切圖
+- [x] Final JSON Generator — player 用 .json
+- [x] Web Player 實現 — 單一 HTML 檔案，無外部依賴
+- [x] 自動 recall 可視化 — 7:3 Flex，自動消失
+- [x] 路徑處理修復 — 相對路徑轉換 (相對於 player.html)
+- [x] 字幕時間同步 — player 內建字幕渲染
 
 ### 🚧 進行中 / 計劃中
 
@@ -381,18 +518,22 @@ Response: YES → 需要視覺分析
   - 融合到逐字稿中
 
 - [x] 智能截圖相關內容
-  - ✅ Recall frame 提取時間修復：使用被回想段落的時間而非 trigger segment start
-  - ✅ ROI 偵測 Prompt 增強：包含 trigger text、recall text 的完整上下文
-  - ✅ 錯誤處理改進：顯示實際 API 錯誤信息
+  - Recall frame 提取時間修復：使用被回想段落的時間而非 trigger segment start
+  - ROI 偵測 Prompt 增強：包含 trigger text、recall text 的完整上下文
+  - 錯誤處理改進：顯示實際 API 錯誤信息
 
-- [ ] 字幕+圖片鑲嵌回影片
-  - 使用 FFmpeg overlay 或 OpenCV
-  - 或轉出 WebVTT + 副本集合格式
+- [x] Web Player 實現
+  - 單一 HTML 檔案，無外部依賴
+  - 7:3 Flex 布局（70% 視頻 + 30% 回想邊欄）
+  - 自動時間同步 + 字幕渲染
+  - 自動消失 + 淡出動畫
+  - 相對路徑正確處理
 
 - [ ] 滑鼠/指標偵測
 - [ ] 相同時刻多個指示詞多個描述自動去重
-- [ ] 輸出格式優化（Markdown, HTML, SRT 字幕）
+- [ ] 輸出格式優化（Markdown, HTML）
 - [ ] 性能優化（並行幀分析）
+- [ ] 移動端適配（響應式設計）
 
 ---
 
@@ -479,6 +620,22 @@ result = fusion.fuse(transcript, analyses)
 ---
 ## Version History
 
+### v1.3.0 (2026-06-02)
+  - **Web Player 實現**：單一 HTML 檔案，無外部依賴
+    - 7:3 Flex 布局（70% 視頻 + 30% 回想邊欄）
+    - 自動時間同步 + 字幕渲染（內建 VTT 軌道）
+    - 自動消失 + 150ms 淡出動畫
+  - **Final JSON Generator**：播放器格式轉換
+    - 簡化 JSON 結構（segments + recalls）
+    - 完整字段驗證和對應映射
+    - 相對路徑轉換（基於 web/player.html）
+  - **路徑處理修復**：
+    - 影片路徑：`../demo_video/video.mp4`（相對於 player.html）
+    - 字幕路徑：`../outputs/results/video.srt`
+    - recall frame 路徑：`../../outputs/results/frames/...`
+  - **數據流修復**：Step 5b 後將 recalls 寫回 fused_data
+  - **多 Recall**：自動堆疊+排序，獨立計時
+
 ### v1.2.3 (2026-05-31)
   - ✅ **Recall Frame 時間修復**：使用被回想段落及內容的畫面而非 trigger segment time
   - ✅ **ROI 偵測 Prompt 增強**：Vision API 現包含完整語境
@@ -533,6 +690,6 @@ result = fusion.fuse(transcript, analyses)
 
 ---
 
-**最後更新**: 2026-05-26  
-**版本**: v1.2.1  
-**狀態**: 功能完整，已驗證，持續優化
+**最後更新**: 2026-06-02  
+**版本**: v1.3.0  
+**狀態**: Web Player 功能完整，持續優化

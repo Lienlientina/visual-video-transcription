@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>影片回想可視化播放器</title>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: Arial, sans-serif;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+            gap: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+        }
+        
+        #video-area {
+            flex: 7;  /* 改為 7，占 70% 寬 */
+            display: flex;
+            flex-direction: column;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        #video-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+        }
+        
+        video {
+            width: 100%;
+            height: auto;  /* 關鍵：保持原始比例 */
+            max-height: 100%;
+        }
+        
+        #subtitles {
+            padding: 15px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            text-align: center;
+            min-height: 40px;
+            font-size: 14px;
+        }
+        
+        #recall-sidebar {
+            flex: 3;  /* 改為 3，占 30% 寬 */
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #recall-sidebar h3 {
+            margin: 0 0 15px 0;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        #recall-grid {
+            display: flex;
+            flex-direction: column;  /* 改為竪排（1 列） */
+            gap: 10px;
+            flex: 1;
+        }
+        
+        .recall-item {
+            flex: 0 0 auto;  /* 不拉伸，保持原大小 */
+            border: 2px solid #ccc;
+            border-radius: 4px;
+            overflow: hidden;
+            opacity: 1;
+            transition: opacity 0.3s ease-out;
+            background: #f9f9f9;
+        }
+        
+        .recall-item.low-confidence {
+            border-color: #ffaa00;
+        }
+        
+        .recall-item img {
+            width: 100%;
+            aspect-ratio: 16/9;  /* 保持 16:9 比例 */
+            object-fit: cover;   /* 圖片填充，不拉伸 */
+            display: block;
+        }
+        
+        .recall-info {
+            padding: 8px;
+            font-size: 12px;
+            background: #fff;
+        }
+        
+        .recall-type {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        
+        .recall-cue {
+            color: #666;
+            font-style: italic;
+            margin-bottom: 4px;
+            word-wrap: break-word;
+        }
+        
+        .confidence-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            background: #e0e0e0;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- 左邊：70% 的空間 -->
+        <div id="video-area">
+            <div id="video-wrapper">
+                <video id="main-video" controls></video>
+            </div>
+            <div id="subtitles"></div>
+        </div>
+        
+        <!-- 右邊：30% 的空間 -->
+        <div id="recall-sidebar">
+            <h3>🎯 回想內容</h3>
+            <div id="recall-grid"></div>
+        </div>
+    </div>
+    
+    <script>
+        class VideoPlayer {
+            constructor() {
+                this.video = document.getElementById('main-video');
+                this.subtitleDiv = document.getElementById('subtitles');
+                this.recallGrid = document.getElementById('recall-grid');
+                this.transcript = null;
+                this.recalls = [];
+                this.shownRecalls = new Set();      // 已顯示過的 recall ID
+                this.recallTimers = new Map();      // recall 的淡出計時器
+                this.recallShowTimes = new Map();   // ← 新增：每個 recall 的顯示時間
+                this.recallOrderCounter = 0;  /* 用於追蹤 order 順序 */
+                
+                this.video.addEventListener('timeupdate', () => this.update());
+                this.loadJsonFromUrl();
+            }
+            
+            loadJsonFromUrl() {
+                /* 從 URL 參數或 localStorage 讀取 JSON 路徑 */
+                const params = new URLSearchParams(window.location.search);
+                const jsonPath = params.get('json') || '/outputs/results/final.json';
+                
+                fetch(jsonPath)
+                    .then(r => r.json())
+                    .then(data => {
+                        this.transcript = data;
+                        this.recalls = data.recalls || [];
+                        
+                        /* 設置影片 */
+                        this.video.src = data.video_path || '../demo_video/video.mp4';
+                        
+                        /* 設置字幕軌道（若有 VTT/SRT）*/
+                        if (data.subtitle_path) {
+                            const track = document.createElement('track');
+                            track.kind = 'subtitles';
+                            track.src = data.subtitle_path;
+                            track.srclang = 'zh';
+                            this.video.appendChild(track);
+                        }
+                        
+                        console.log(`✓ 已載入 ${this.recalls.length} 個 recall`);
+                        console.log(`✓ 影片: ${data.video_path}`);
+                        console.log(`✓ 字幕: ${data.subtitle_path}`);
+                        console.log(`✓ 總段落: ${data.total_segments}`);
+                    })
+                    .catch(err => {
+                        console.error('載入 JSON 失敗:', err);
+                        this.subtitleDiv.textContent = '❌ 無法載入數據: ' + err.message;
+                    });
+            }
+            
+            update() {
+                const currentTime = this.video.currentTime;
+                
+                /* 更新字幕 */
+                this.updateSubtitles(currentTime);
+                
+                /* 顯示 recall frames */
+                this.showRecallFrames(currentTime);
+            }
+            
+            updateSubtitles(currentTime) {
+                if (!this.transcript || !this.transcript.segments) {
+                    return;
+                }
+                
+                const currentSegment = this.transcript.segments.find(
+                    s => s.start <= currentTime && currentTime < s.end
+                );
+                
+                if (currentSegment) {
+                    this.subtitleDiv.textContent = currentSegment.text;
+                } else {
+                    this.subtitleDiv.textContent = '';
+                }
+            }
+            
+            showRecallFrames(currentTime) {
+                const timeWindow = 0.5;  /* ±0.5 秒 */
+                const displayDuration = 100000;  /* 顯示 5 秒 */
+                
+                // ← 改：根據「顯示計時」而不是「時間窗口」決定是否刪除
+                // 清理已超時的 recalls（顯示超過 5 秒）
+                const now = Date.now();
+                for (const recallId of this.shownRecalls) {
+                    const showTime = this.recallShowTimes.get(recallId);
+                    if (showTime && (now - showTime) > displayDuration) {
+                        // 已超過 5 秒，移除
+                        this.removeRecallItem(recallId);
+                    }
+                }
+                
+                // 找所有在時間視窗內的 recalls
+                const activeRecalls = this.recalls.filter(r => 
+                    Math.abs((r.precise_time_seconds || 0) - currentTime) < timeWindow
+                );
+                
+                // 添加新出現的 recalls
+                activeRecalls.forEach((recall, idx) => {
+                    const recallId = `${recall.segment_idx}_${idx}`;
+                    
+                    if (!this.shownRecalls.has(recallId)) {
+                        this.addRecallItem(recall, recallId);
+                        this.shownRecalls.add(recallId);
+                        this.recallShowTimes.set(recallId, Date.now());  // ← 記錄顯示時間
+                        
+                        /* 5 秒後淡出 */
+                        this.setRecallTimeout(recallId, displayDuration);
+                    }
+                });
+            }
+            
+            removeRecallItem(recallId) {
+                const element = document.getElementById(`recall_${recallId}`);
+                if (element) {
+                    element.style.opacity = '0';
+                    setTimeout(() => {
+                        if (element.parentNode) {
+                            element.parentNode.removeChild(element);
+                        }
+                        this.shownRecalls.delete(recallId);
+                        this.recallShowTimes.delete(recallId);
+                    }, 150);
+                }
+            }
+            
+            addRecallItem(recall, recallId) {
+                const item = document.createElement('div');
+                item.className = 'recall-item';
+                item.id = `recall_${recallId}`;
+                
+                /* 新項目的 order = 當前計數器，這樣新的在下面 */
+                item.style.order = this.recallOrderCounter++;
+                
+                /* 低置信度標記 */
+                if (recall.confidence < 0.7) {
+                    item.classList.add('low-confidence');
+                }
+                
+                const confidencePercent = Math.round((recall.confidence || 0) * 100);
+                const typeLabel = recall.recall_type === 'direct' ? 'Direct' : 'Contrast';
+                const frameUrl = recall.frame_cropped || recall.frame_original;
+                
+                // 如果有圖片，顯示圖片；否則顯示文字
+                let mediaHtml = '';
+                if (frameUrl) {
+                    mediaHtml = `<img src="${frameUrl}" alt="Recall frame" onerror="this.alt='圖片載入失敗'">`;
+                } else {
+                    mediaHtml = `<div style="width: 100%; aspect-ratio: 16/9; background: #e8e8e8; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #999;">📝 無圖片</div>`;
+                }
+                
+                item.innerHTML = `
+                    ${mediaHtml}
+                    <div class="recall-info">
+                        <div class="recall-type">${typeLabel}</div>
+                        <div class="recall-text">「${recall.recalled_text}」</div>
+                        <div style="font-size: 11px; color: #999; margin-top: 4px;">信心: ${confidencePercent}%</div>
+                    </div>
+                `;
+                
+                this.recallGrid.appendChild(item);
+            }
+            
+            setRecallTimeout(recallId, duration) {
+                /* 清除舊的 timer */
+                if (this.recallTimers.has(recallId)) {
+                    clearTimeout(this.recallTimers.get(recallId));
+                }
+                
+                /* 設置新的 timer */
+                const timer = setTimeout(() => {
+                    const element = document.getElementById(`recall_${recallId}`);
+                    if (element) {
+                        element.style.opacity = '0';
+                        setTimeout(() => element.remove(), 150);  /* 淡出動畫 */
+                    }
+                    this.shownRecalls.delete(recallId);
+                    this.recallTimers.delete(recallId);
+                }, duration);
+                
+                this.recallTimers.set(recallId, timer);
+            }
+        }
+        
+        /* 初始化 */
+        document.addEventListener('DOMContentLoaded', () => {
+            new VideoPlayer();
+        });
+    </script>
+</body>
+</html>
