@@ -239,7 +239,7 @@ visual-video-transcription/
 │
 ├── web/                           # Web player
 │   └── player.html                # 單一 .html
-│       • 7:3 Flex 布局 (70% 視頻 + 30% 回想)
+│       • 7:3 Flex 布局 (70% 影片 + 30% 回想)
 │       • 自動時間同步 + 字幕顯示
 │       • 自動消失 + 淡出動畫
 │
@@ -524,7 +524,7 @@ Response: YES → 需要視覺分析
 
 - [x] Web Player 實現
   - 單一 HTML 檔案，無外部依賴
-  - 7:3 Flex 布局（70% 視頻 + 30% 回想邊欄）
+  - 7:3 Flex 布局（70% 影片 + 30% 回想邊欄）
   - 自動時間同步 + 字幕渲染
   - 自動消失 + 淡出動畫
   - 相對路徑正確處理
@@ -621,20 +621,20 @@ result = fusion.fuse(transcript, analyses)
 ## Version History
 
 ### v1.3.0 (2026-06-02)
-  - **Web Player 實現**：單一 HTML 檔案，無外部依賴
-    - 7:3 Flex 布局（70% 視頻 + 30% 回想邊欄）
+  - ✅ **Web Player 實現**：單一 HTML 檔案，無外部依賴
+    - 7:3 Flex 布局（70% 影片 + 30% 回想邊欄）
     - 自動時間同步 + 字幕渲染（內建 VTT 軌道）
     - 自動消失 + 150ms 淡出動畫
-  - **Final JSON Generator**：播放器格式轉換
+  - ✅ **Final JSON Generator**：播放器格式轉換
     - 簡化 JSON 結構（segments + recalls）
     - 完整字段驗證和對應映射
     - 相對路徑轉換（基於 web/player.html）
-  - **路徑處理修復**：
+  - ✅ **路徑處理修復**：
     - 影片路徑：`../demo_video/video.mp4`（相對於 player.html）
     - 字幕路徑：`../outputs/results/video.srt`
     - recall frame 路徑：`../../outputs/results/frames/...`
-  - **數據流修復**：Step 5b 後將 recalls 寫回 fused_data
-  - **多 Recall**：自動堆疊+排序，獨立計時
+  - ✅ **數據流修復**：Step 5b 後將 recalls 寫回 fused_data
+  - ✅ **多 Recall**：自動堆疊+排序，獨立計時
 
 ### v1.2.3 (2026-05-31)
   - ✅ **Recall Frame 時間修復**：使用被回想段落及內容的畫面而非 trigger segment time
