@@ -29,6 +29,7 @@
   ↓
 【步驟5b】回想截圖提取 + ROI 裁切
   • Vision API ROI 偵測 (失敗時直接輸出完整圖片)
+  • 自適應內容邊界擴展（行/列標準差，適用任何背景色）
   • 保存原始截圖 + 裁切版本
   ↓
 【步驟6】補充式融合 + 句子合併 (保留原文)
@@ -55,7 +56,7 @@ Web Player 播放
 | **VisionAnalyzer** | Gemini 3.1 Flash Lite 視覺分析 | ✅ 完成 |
 | **RecallDetector** | recall 偵測 (direct, contrast) | ✅ 完成 |
 | **FusionEngine** | 補充式融合 + 句子合併 | ✅ 完成 |
-| **ROIDetector** | recall 截圖 ROI 偵測 + 裁切 | ✅ 完成 |
+| **ROIDetector** | recall 截圖 ROI 偵測 + 自適應內容邊界裁切 | ✅ 完成 |
 | **SubtitleConverter** | .srt 字幕生成 | ✅ 完成 |
 | **FinalJsonGenerator** | player JSON 生成 | ✅ 完成 |
 | **Web Player** | player with recall frame | ✅ 完成 |
@@ -240,8 +241,9 @@ visual-video-transcription/
 ├── web/                           # Web player
 │   └── player.html                # 單一 .html
 │       • 7:3 Flex 布局 (70% 影片 + 30% 回想)
-│       • 自動時間同步 + 字幕顯示
-│       • 自動消失 + 淡出動畫
+│       • 自動時間同步 + 字幕顯示（含 recall 標注 [↑ ...]）
+│       • 時間區間顯示 [t, t+10s] + 淡出動畫
+│       • 點擊 recall 卡片跳轉到被回想內容起始時刻
 │
 ├── tests/
 │   ├── README_tests.md            # 測試使用說明
@@ -378,6 +380,7 @@ Response: YES → 需要視覺分析
     {
       "segment_idx": 3,
       "precise_time_seconds": 52.58,
+      "recalled_start_seconds": 0.37,
       "recall_cue": "根據單變數函數的連鎖律",
       "recalled_text": "各位同學好，這一節我們要介紹...",
       "recall_type": "direct",
@@ -393,6 +396,7 @@ Response: YES → 需要視覺分析
 - ✅ 相對路徑（基於 `web/player.html`）
 - ✅ 簡化 text（僅包含 player 需要的資訊）
 - ✅ 時間精確性（`precise_time_seconds` 用於同步）
+- ✅ `recalled_start_seconds` — 點擊 recall 卡片時跳轉到的目標時刻（被回想內容起始）
 - ✅ 多 recall 支持（自動排序 + 堆疊管理）
 
 ### Web Player 工作流程
@@ -411,14 +415,21 @@ Response: YES → 需要視覺分析
    • timeupdate 事件觸發
    • 檢查當前時間是否有回想
    ↓
-5. 回想顯示邏輯
-   • 找到當前時間 ±0.5s 的回想
-   • 新回想立即顯示並計時（時間到自動消失）
-   • 舊回想自動淡出（150ms 動畫）
+5. 回想顯示邏輯（時間區間模式）
+   • 根據 recall 的 precise_time_seconds，計算顯示區間 [t, t+10s]
+   • 當 currentTime 進入此區間時顯示 recall 卡片
+   • 當 currentTime 離開此區間時隱藏 recall 卡片
+   • 無論是否點擊，區間內都可見，便於拖動進度條查看
+   • 多個 recall 自動堆疊顯示
    ↓
-6. 字幕同步
+6. 點擊 Recall 卡片
+   • 跳轉到 recalled_start_seconds（被回想內容的起始時刻）
+   • 自動播放
+   ↓
+7. 字幕同步
    • 根據當前時間找到對應 segment
    • 實時更新字幕區域
+   • 顯示 recall 標注 [↑ [時間] 被回想文本] 在字幕上方
 ```
 
 ### Web Player 佈局
@@ -505,6 +516,10 @@ Response: YES → 需要視覺分析
 - [x] 自動 recall 可視化 — 7:3 Flex，自動消失
 - [x] 路徑處理修復 — 相對路徑轉換 (相對於 player.html)
 - [x] 字幕時間同步 — player 內建字幕渲染
+- [x] Recall 顯示邏輯 — 時間區間模式 [t, t+10s]，跳轉/拖動進度條均可正確顯示
+- [x] 字幕區 recall 標注 — `[↑ [時間] 被回想文本]` 顯示於字幕上方
+- [x] Recall 卡片點擊跳轉 — 點擊跳轉至被回想內容起始時刻（`recalled_start_seconds`）
+- [x] ROI 裁切改進 — 行/列標準差自適應邊界偵測，替換固定 padding，適用任何背景色
 
 ### 🚧 進行中 / 計劃中
 
@@ -620,6 +635,18 @@ result = fusion.fuse(transcript, analyses)
 ---
 ## Version History
 
+### v1.4.0 (2026-06-08)
+  - ✅ **Web Player recall 顯示邏輯改進**：
+    - 計時器模式改為時間區間 [t, t+10s]，跳轉/拖動進度條均正確顯示
+    - 字幕區新增 recall 標注 `[↑ [時間] 被回想文本]`，顯示於字幕上方
+    - 圖片顯示修正：完整顯示不裁切（`object-fit: contain`）
+  - ✅ **Recall 卡片點擊跳轉**：
+    - 點擊卡片跳轉至被回想內容的起始時刻
+    - `FinalJsonGenerator` 新增 `recalled_start_seconds` 字段
+  - ✅ **ROI 裁切改進**：自適應內容邊界偵測
+    - 以 AI ROI 為起點，用行/列標準差向外掃描至真實內容邊界
+    - 門檻值為相對值（最大值 10%），替換固定 padding，適用任何背景色
+
 ### v1.3.0 (2026-06-02)
   - ✅ **Web Player 實現**：單一 HTML 檔案，無外部依賴
     - 7:3 Flex 布局（70% 影片 + 30% 回想邊欄）
@@ -690,6 +717,6 @@ result = fusion.fuse(transcript, analyses)
 
 ---
 
-**最後更新**: 2026-06-02  
-**版本**: v1.3.0  
+**最後更新**: 2026-06-08  
+**版本**: v1.4.0  
 **狀態**: Web Player 功能完整，持續優化

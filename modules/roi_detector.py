@@ -100,8 +100,7 @@ class ROIDetector:
 
                 指導原則：
                 - 優先找出公式、方程式、定理、圖表、圖示說明、code、重要文字等
-                - 保持截圖專注在單一重點，避免同時包含多個元素(只公式或只圖片或只樹狀圖...等)
-                - 公式或樹狀圖部分應完整截圖，盡量避免只截取部分內容
+                - 公式或樹狀圖部分應完整截圖，避免只截取部分內容
                 - 盡量避免邊框、光標、空白區、UI元素
 
                 請返回矩形框的相對坐標（0-1 範圍）：
@@ -210,15 +209,81 @@ class ROIDetector:
         
         return self._get_fallback_roi("Vision API 不可用")
     
+    def _snap_to_content_boundary(self, img, x, y, w, h):
+        """
+        以 AI ROI 為起點，向四個方向擴張至真實內容邊界。
+        用行/列標準差判斷「背景 vs 內容」，門檻為相對值，適用任何背景色。
+        """
+        height, width = img.shape[:2]
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # 搜索範圍 = AI ROI + 各方向 12%
+        MARGIN = 0.12
+        s_y1 = max(0, y - int(MARGIN * height))
+        s_y2 = min(height, y + h + int(MARGIN * height))
+        s_x1 = max(0, x - int(MARGIN * width))
+        s_x2 = min(width, x + w + int(MARGIN * width))
+
+        row_stds = np.array([np.std(gray[r, s_x1:s_x2]) for r in range(s_y1, s_y2)])
+        col_stds = np.array([np.std(gray[s_y1:s_y2, c]) for c in range(s_x1, s_x2)])
+
+        if len(row_stds) == 0 or len(col_stds) == 0:
+            return x, y, w, h
+
+        # 背景門檻：標準差低於最大值 10% 視為純色背景
+        row_bg = max(row_stds) * 0.10
+        col_bg = max(col_stds) * 0.10
+
+        r_top = y - s_y1
+        r_bot = (y + h) - s_y1
+        c_lft = x - s_x1
+        c_rgt = (x + w) - s_x1
+
+        # 向上擴張：從 AI ROI 頂部往上掃，遇背景列停下
+        new_y1 = s_y1
+        for r in range(r_top, -1, -1):
+            if row_stds[r] < row_bg:
+                new_y1 = s_y1 + r + 1
+                break
+
+        # 向下擴張
+        new_y2 = s_y2
+        for r in range(r_bot, len(row_stds)):
+            if row_stds[r] < row_bg:
+                new_y2 = s_y1 + r
+                break
+
+        # 向左擴張
+        new_x1 = s_x1
+        for c in range(c_lft, -1, -1):
+            if col_stds[c] < col_bg:
+                new_x1 = s_x1 + c + 1
+                break
+
+        # 向右擴張
+        new_x2 = s_x2
+        for c in range(c_rgt, len(col_stds)):
+            if col_stds[c] < col_bg:
+                new_x2 = s_x1 + c
+                break
+
+        # 確保不縮小 AI ROI
+        new_x1 = min(new_x1, x)
+        new_y1 = min(new_y1, y)
+        new_x2 = max(new_x2, x + w)
+        new_y2 = max(new_y2, y + h)
+
+        return new_x1, new_y1, new_x2 - new_x1, new_y2 - new_y1
+
     def crop_image(self, image_path, roi_coords, output_path):
         """
         根據 ROI 坐標裁切並保存圖片
-        
+
         Args:
             image_path (str): 原始圖片路徑
             roi_coords (dict): ROI 座標（相對形式）
             output_path (str): 輸出路徑
-        
+
         Returns:
             dict: 裁切信息
         """
@@ -227,21 +292,30 @@ class ROIDetector:
             img = cv2.imread(image_path)
             if img is None:
                 return {"success": False, "error": "圖片讀取失敗"}
-            
+
             height, width = img.shape[:2]
-            
+
             # 相對坐標轉換為像素坐標
             x = int(roi_coords["x_ratio"] * width)
             y = int(roi_coords["y_ratio"] * height)
             w = int(roi_coords["width_ratio"] * width)
             h = int(roi_coords["height_ratio"] * height)
-            
+
             # 邊界檢查
             x = max(0, min(x, width - 1))
             y = max(0, min(y, height - 1))
             w = max(1, min(w, width - x))
             h = max(1, min(h, height - y))
-            
+
+            # 用行/列標準差掃描自動擴展到真實內容邊界（不依賴背景色）
+            x, y, w, h = self._snap_to_content_boundary(img, x, y, w, h)
+
+            # 最終邊界檢查
+            x = max(0, min(x, width - 1))
+            y = max(0, min(y, height - 1))
+            w = max(1, min(w, width - x))
+            h = max(1, min(h, height - y))
+
             # 裁切
             cropped = img[y:y+h, x:x+w]
             

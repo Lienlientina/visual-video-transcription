@@ -206,10 +206,18 @@ class FinalJsonGenerator:
         # 處理圖片路徑
         frame_info = self._process_frame_paths(recall)
         
+        # 計算被回想 segment 的起始秒數（供 player 點擊跳轉用）
+        recalled_start_seconds = 0.0
+        recalled_segment_idx = recall.get("recalled_segment_idx")
+        segments_list = fusion_data.get("segments", [])
+        if recalled_segment_idx is not None and recalled_segment_idx < len(segments_list):
+            recalled_start_seconds = segments_list[recalled_segment_idx].get("start", 0.0)
+
         # 構建處理後的 recall
         processed_recall = {
             "segment_idx": recall.get("segment_idx"),
             "precise_time_seconds": precise_time_seconds,
+            "recalled_start_seconds": recalled_start_seconds,
             "recall_cue": recall_cue,
             "recalled_text": recalled_text,
             "recall_type": recall.get("recall_type", "direct"),
