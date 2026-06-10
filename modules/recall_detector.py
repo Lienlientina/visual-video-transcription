@@ -92,7 +92,7 @@ class RecallDetector:
         for idx, seg in enumerate(segments):
             time_range = seg.get("time", f"{seg.get('start', 0):.1f}s")
             text = seg.get("text", "")
-            lines.append(f"[Segment {idx}] {time_range}\nText: {text}\n")
+            lines.append(f"[Segment {idx}] {time_range}\n{text}\n")
         
         return "\n".join(lines)
     

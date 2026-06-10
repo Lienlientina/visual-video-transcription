@@ -195,7 +195,7 @@ class Transcriber:
             segments_json = json.dumps(segments_dict, ensure_ascii=False, indent=2)
             
             # ← 一次性發給 Gemini，要求以 JSON 格式返回
-            if is_chinese:
+            if language == "zh":
                 prompt = f"""請修正以下繁體中文語音轉錄的錯字，修正以下幾種情況：
                 1. 同音字錯誤（例如「咋」→「這」、「再」→「在」）
                 2. 專有名詞誤認（例如「派森」→「Python」）

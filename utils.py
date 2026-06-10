@@ -155,9 +155,10 @@ def seconds_to_timestamp(seconds):
         '[0:02:05]'
     """
     total_seconds = int(seconds)
-    minutes = total_seconds // 60
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
     secs = total_seconds % 60
-    return f"[0:{minutes:02d}:{secs:02d}]"
+    return f"[{hours}:{minutes:02d}:{secs:02d}]"
 
 
 def timestamp_to_seconds(timestamp_str):

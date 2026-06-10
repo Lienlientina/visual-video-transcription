@@ -183,14 +183,14 @@ outputs/
 - OBS（直播用）
 - Shotcut、DaVinci Resolve（剪輯用）
 
-#### 🆕 Web 播放器用法
+### Web 播放器用法
 
 使用 `web/player.html`：
 
 **啟動 HTTP 服務器**
 ```bash
 cd "your_project_path"
-python -m http.server 8000
+python scritps/serve.py
 ```
 
 **在瀏覽器打開**
@@ -243,6 +243,9 @@ visual-video-transcription/
 │       • 自動時間同步 + 字幕顯示（含 recall 標注 [↑ ...]）
 │       • 時間區間顯示 [t, t+10s] + 淡出動畫
 │       • 點擊 recall 卡片跳轉到被回想內容起始時刻
+|
+├── scripts/
+│   ├── serve.py                   # 支援 Range Request 的 HTTP Server（影片 seek 需要）
 │
 ├── tests/
 │   ├── README_tests.md            # 測試使用說明
@@ -602,39 +605,15 @@ DEICTIC_WORDS_EN = [
 ]
 ```
 
-### 在 Python 專案中引用 module
-
-```python
-from modules.transcriber import Transcriber
-from modules.deictic_detector import DeicticDetector
-from modules.frame_extractor import FrameExtractor
-from modules.vision_analyzer import VisionAnalyzer
-from modules.fusion_engine import FusionEngine
-
-# 1. 轉錄
-transcriber = Transcriber()
-transcript = transcriber.transcribe("my_video.mp4")
-transcriber.save_transcript("my_transcript.json")
-
-# 2. 檢測指示詞
-detector = DeicticDetector()
-deictic_data = detector.detect_from_transcript("my_transcript.json")
-
-# 3. 提取幀
-extractor = FrameExtractor("my_video.mp4")
-frames = extractor.extract_frames_from_deictic(deictic_data)
-
-# 4. 視覺分析
-analyzer = VisionAnalyzer()
-analyses = analyzer.analyze_frames_batch(frames)
-
-# 5. 融合結果
-fusion = FusionEngine()
-result = fusion.fuse(transcript, analyses)
-```
-
 ---
 ## Version History
+
+### v1.4.1 (2026-06-10)
+  - ✅ **修復 web player**：
+    - 接受不同長寬比的影片，影片保持在同一位置，不影響字幕
+    - 固定排版，解決字幕長短不一造成影片上下移動問題
+    - 新增 `serve.py` 解決 `python -m http.server` 不支援 range request 的問題
+  - ✅ 修復轉錄時間記錄問題
 
 ### v1.4.0 (2026-06-08)
   - ✅ **Web Player recall 顯示邏輯改進**：

@@ -66,7 +66,7 @@ class DeicticDetector:
             
             for word_info in words_found:
                 # 檢查是否已經處理過這個詞
-                word_key = (timestamp, word_info["word"])
+                word_key = (timestamp, word_info["word"], word_info["pos"])
                 if word_key in seen_words:
                     print(f"[DeicticDetector] 跳過重複: {timestamp} 「{word_info['word']}」")
                     continue
