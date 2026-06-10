@@ -46,7 +46,7 @@
             color: white;
             text-align: center;
             min-height: 40px;
-            font-size: 20px;
+            font-size: 30px;
         }
         
         #recall-sidebar {
@@ -235,7 +235,7 @@
                     }).join(' ');
 
                     this.subtitleDiv.innerHTML =
-                        `<div style="color:#aaa;font-size:15px;margin-bottom:4px;">${annotations}</div>` +
+                        `<div style="color:#aaa;font-size:20px;margin-bottom:4px;">${annotations}</div>` +
                         `<div>${this._esc(currentSegment.text)}</div>`;
                 } else {
                     this.subtitleDiv.textContent = currentSegment.text;
@@ -299,7 +299,7 @@
                     ${mediaHtml}
                     <div class="recall-info">
                         <div class="recall-type">${typeLabel}</div>
-                        <div class="recall-text">「${this._esc(recall.recalled_text)}」</div>
+                        <div class="recall-text">「${this._esc(recall.recalled_concept || recall.recalled_text)}」</div>
                         <div style="font-size:11px;color:#999;margin-top:4px;">信心: ${confidencePercent}%</div>
                     </div>
                 `;

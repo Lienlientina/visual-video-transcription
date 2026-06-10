@@ -1,6 +1,6 @@
 """
 完整流程集成測試
-逐字稿 → 指示詞偵測 → 截幀 → 視覺分析 → 融合
+影片 → 逐字稿 → 指示詞偵測 → 截幀 → 視覺分析 → 回想偵測 → 融合 → 字幕 → Final JSON
 """
 import sys
 import json
@@ -28,7 +28,7 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
     """
     
     print("=" * 70)
-    print("完整管線：逐字稿 → 指示詞 → 截幀 → 視覺分析 → 融合")
+    print("完整管線：影片 → 逐字稿 → 指示詞 → 截幀 → 視覺分析 → 回想偵測 → 融合 → 字幕 → Final JSON")
     print("=" * 70)
     
     video_path = Path(video_path)
@@ -138,9 +138,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
             traceback.print_exc()
             return
     
-    # ========== 步驟 4b: 回想內容識別 ==========
+    # ========== 步驟 5: 回想內容識別 ==========
     print("\n" + "="*70)
-    print("【步驟4b】回想內容識別：偵測說話者對過去內容的引用")
+    print("【步驟5】回想內容識別：偵測說話者對過去內容的引用")
     print("="*70)
     
     language = transcript_json.get("language", "en")
@@ -175,9 +175,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print(f"  - 繼續使用融合...")
         recall_data = {"recalls": []}
     
-    # ========== 步驟 5: 融合 ==========
+    # ========== 步驟 6: 補充式融合 ==========
     print("\n" + "="*70)
-    print("【步驟5】融合：將指示詞替換為視覺描述 + 標注回想內容 + 生成字幕")
+    print("【步驟6】補充式融合：將指示詞替換為視覺描述 + 標注回想內容")
     print("="*70)
     
     try:
@@ -193,9 +193,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print(f"✗ 融合失敗: {e}")
         return
     
-    # ========== 步驟 5b: 生成 Recall 幀 ==========
+    # ========== 步驟 6b: 回想截圖提取 + ROI 裁切 ==========
     print("\n" + "="*70)
-    print("【步驟5b】為每個 Recall 生成原始截圖和 ROI 裁切截圖")
+    print("【步驟6b】回想截圖提取 + ROI 裁切：為每個 Recall 生成原始截圖和自適應邊界裁切截圖")
     print("="*70)
     
     try:
@@ -218,9 +218,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         import traceback
         traceback.print_exc()
     
-    # ========== 輸出結果 ==========
+    # ========== 步驟 7: 保存融合逐字稿 + 產生字幕 ==========
     print("\n" + "="*70)
-    print("【步驟6】保存融合逐字稿 + 字幕")
+    print("【步驟7】保存融合逐字稿 + 產生字幕文件 (SRT 格式)")
     print("="*70)
     
     try:
@@ -236,9 +236,9 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print(f"✗ 保存失敗: {e}")
         return
     
-    # ========== 步驟 6b: 生成 Final JSON（供播放器使用）==========
+    # ========== 步驟 8: 生成播放器 JSON ==========
     print("\n" + "="*70)
-    print("【步驟6b】生成 Final JSON - 為 Web 播放器提供數據")
+    print("【步驟8】生成播放器 JSON (Final JSON) - 為 Web 播放器提供數據")
     print("="*70)
     
     try:
@@ -289,17 +289,12 @@ def run_complete_pipeline(video_path, transcript_json_path=None):
         print()
     
     print("=" * 70)
-    print("✓ 完整流程執行完成！")
-    print("  - 已生成 fusion.json（原始數據）")
-    print("  - 已生成 final.json（播放器數據）")
-    print("  - 已生成 player.html 可用的影片 + 字幕 + recall frames")
-    print("=" * 70)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("=" * 70)
-        print("完整管線：影片 → 逐字稿 → 指示詞 → 截幀 → 視覺分析 → 融合")
+        print("完整管線：影片 → 逐字稿 → 指示詞 → 截幀 → 視覺分析 → 回想偵測 → 融合 → 字幕 → Final JSON")
         print("=" * 70)
         print("\n使用方法:")
         print(f"  python tests/test_complete_pipeline.py <影片路徑> [逐字稿JSON]")

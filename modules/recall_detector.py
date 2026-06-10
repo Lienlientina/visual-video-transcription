@@ -160,6 +160,7 @@ class RecallDetector:
       "current_text": "<當前 segment 的完整文本>",
       "recalled_segment_idx": <被回想的過去 segment 索引>,
       "recalled_text": "<過去 segment 的完整文本>",
+      "recalled_concept": "<一句話描述被回想的核心概念，5-15 字，例如：'Chain Rule 公式' 或 '單變數函數微分規則'>",
       "position_in_segment_ratio": <回想觸發的位置，範圍 0.0-1.0，代表在 segment 內的百分比位置>,
       "confidence": <置信度 0.0-1.0，1.0 表示非常確定>,
       "reasoning": "<為什麼認為這是回想，解釋 segment_idx 和 recalled_segment_idx 的關係>"
@@ -174,6 +175,7 @@ class RecallDetector:
 - 只包含明確的或強烈暗示的回想，不要包含模糊的可能性
 - 如果沒有找到回想，返回空列表
 - recall_cue 應該是段落中實際出現的詞彙或短語
+- recalled_concept 應為簡短概念標籤（5-15字），不是整段文本的複製
 """
 
     def _build_english_prompt(self, transcript_text: str, segments: List[Dict]) -> str:
@@ -215,6 +217,7 @@ Output ONLY valid JSON (no other text):
       "current_text": "<full text of current segment>",
       "recalled_segment_idx": <index of past segment being referenced (must be < segment_idx)>,
       "recalled_text": "<full text of past segment>",
+      "recalled_concept": "<short concept label (5-10 words) for the recalled content, e.g., 'Chain Rule formula definition'>",
       "position_in_segment_ratio": <0.0-1.0 where recall phrase appears in segment>,
       "confidence": <0.0-1.0: only 0.8+ for explicit recalls with clear markers>,
       "reasoning": "<WHY this is a recall: show the explicit connection>"
@@ -229,6 +232,7 @@ Output ONLY valid JSON (no other text):
 - If confidence would be < 0.8, DO NOT include it
 - Return empty list if no clear recalls found
 - recall_cue MUST be actual text from the segment containing the recall indicator
+- recalled_concept must be a concise label (5-10 words), NOT a copy of the full recalled_text
 """
 
     def _parse_llm_response(self, response_text: str, segments: List[Dict], language: str = "en") -> List[Dict]:
@@ -298,6 +302,7 @@ Output ONLY valid JSON (no other text):
                         "trigger_text": str(recall.get("current_text", "")),
                         "recalled_segment_idx": rec_seg_idx,
                         "recalled_text": str(recall.get("recalled_text", "")),
+                        "recalled_concept": str(recall.get("recalled_concept", "")),
                         "recalled_end_time": segments[rec_seg_idx].get("end", 0),
                         "position_in_segment_ratio": ratio,
                         "confidence": confidence,

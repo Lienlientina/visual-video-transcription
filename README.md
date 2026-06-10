@@ -85,7 +85,6 @@ ffmpeg-python==0.2.0
 requests>=2.31.0
 google-generativeai>=0.3.0
 python-dotenv>=0.19.0
-nltk>=3.8.0
 opencv-python>=4.5.0
 ```
 
@@ -382,6 +381,7 @@ Response: YES → 需要視覺分析
       "precise_time_seconds": 52.58,
       "recalled_start_seconds": 0.37,
       "recall_cue": "根據單變數函數的連鎖律",
+      "recalled_concept": "單變數連鎖律公式",
       "recalled_text": "各位同學好，這一節我們要介紹...",
       "recall_type": "direct",
       "confidence": 0.95,
@@ -396,6 +396,7 @@ Response: YES → 需要視覺分析
 - ✅ 相對路徑（基於 `web/player.html`）
 - ✅ 簡化 text（僅包含 player 需要的資訊）
 - ✅ 時間精確性（`precise_time_seconds` 用於同步）
+- ✅ `recalled_concept` — 被回想概念的簡短標籤（5-15字，由 LLM 生成，顯示於卡片）
 - ✅ `recalled_start_seconds` — 點擊 recall 卡片時跳轉到的目標時刻（被回想內容起始）
 - ✅ 多 recall 支持（自動排序 + 堆疊管理）
 

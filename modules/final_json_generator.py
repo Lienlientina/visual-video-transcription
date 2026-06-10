@@ -219,6 +219,7 @@ class FinalJsonGenerator:
             "precise_time_seconds": precise_time_seconds,
             "recalled_start_seconds": recalled_start_seconds,
             "recall_cue": recall_cue,
+            "recalled_concept": recall.get("recalled_concept", ""),
             "recalled_text": recalled_text,
             "recall_type": recall.get("recall_type", "direct"),
             "confidence": recall.get("confidence", 0.0),
